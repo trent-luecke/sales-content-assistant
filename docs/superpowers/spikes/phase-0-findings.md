@@ -7,6 +7,21 @@
 - Deployed: 2026-07-29
 - NOTE: Deployment Protection (Vercel Authentication) must be OFF for the Slack webhook to be reachable. Security boundary is Slack signature verification (Task 1), not Vercel Auth.
 
+## Phase 1 — Plan 1 (Foundation + Mining): COMPLETE ✅ (2026-07-29)
+Libs shipped (`supabase`, `guardrail`, `ideas`, `profiles`, `mining`), 16 unit tests green,
+tsc clean. Live verification (temp route, since removed) for Trent as guinea pig:
+6 demos → 7 voice traits (captured real tics, e.g. "'Beautiful' as verbal punctuation") →
+16 ideas mined + inserted → top-3 anonymized hooks, **no customer names leaked** (source had
+"John Kurta"/"Josh"/"Fusion High Performance Training"; none surfaced).
+
+**Carry-forward for the draft-loop plan:** strengthen the anonymization guardrail where the
+actual *post* is generated — also forbid the meeting's `prospect_name` and add a second-pass
+`containsAny` check on the final draft. The digest-hook path relied mostly on prompt-level
+anonymization (title-name extraction is weak for colon-style titles); it held, but the real
+leakage surface is the drafted post, not the hooks.
+
+---
+
 ## Phase 0 result: ALL THREE GO ✅
 Async-ack (A), Canvas-in-DM (B), and voice/story extraction (C) all validated on real
 infrastructure/data. The architecture in the design spec holds with no fallbacks needed.
