@@ -7,6 +7,14 @@
 - Deployed: 2026-07-29
 - NOTE: Deployment Protection (Vercel Authentication) must be OFF for the Slack webhook to be reachable. Security boundary is Slack signature verification (Task 1), not Vercel Auth.
 
+## Phase 0 result: ALL THREE GO ✅
+Async-ack (A), Canvas-in-DM (B), and voice/story extraction (C) all validated on real
+infrastructure/data. The architecture in the design spec holds with no fallbacks needed.
+One carry-forward blocker for Phase 1: repair the Avoma RAG `list_meetings` Supabase error
+(per-rep demo scoping). Details in each section below.
+
+---
+
 ## Spike A — Slack async-ack on Vercel
 **Verdict: GO** ✅ (verified live 2026-07-29)
 
@@ -50,10 +58,30 @@ async-ack) is viable exactly as designed. No fallback needed.
 (replace) to update it as they iterate. No message-repost fallback needed.
 
 ## Spike C — Avoma → voice → story
-_verdict pending_
+_artifacts drafted; awaiting owner scoring_
 
-- Transcript source used (MCP / REST): 
-- Voice sounds like me (1–5): 
-- Story is postable (yes/no): 
-- Any customer/deal leakage (yes/no): 
-- Verdict: 
+- Guinea pig: **Chris Reynolds** (owner Trent is not a demo rep / barely in the corpus;
+  Chris is a real rep + Trent's own brain-dump example, so Trent can judge authenticity).
+- Transcript source used: **`search_transcripts` MCP tool** (works). Gathered Chris's
+  turns across ~7 demos by filtering search results to his labeled turns.
+- **`list_meetings` is DOWN** — the `meetings`-table read throws a Supabase/Cloudflare
+  1101 "Worker threw exception" (the `search_chunks` RPC is fine). Code in
+  `Avoma-Ingest-Chris/api/retrieval.py` is well-formed; this is a Supabase platform/table
+  issue on Trent's RAG. **Phase 1 dependency risk:** per-rep demo scoping relies on this
+  path — must be fixed (Supabase dashboard → logs / RLS on `meetings`) before Phase 1
+  can cleanly pull "this rep's demos."
+- Extraction done natively by Claude in-session (env redaction blocks a local script
+  from reading ANTHROPIC_API_KEY; production runs this server-side on Vercel).
+- Artifacts: `voice-profile-chris.md`, `story-candidate-chris.md`.
+- Voice sounds like Chris (1–5): **4/5** (Trent)
+- Story is postable (yes/no): **Yes** (Trent)
+- Any customer/deal leakage (yes/no): **No** (Trent)
+
+**Verdict: GO** ✅ (Trent-scored 2026-07-29). Auto-derived voice is convincing (4/5) and
+the mined story is postable with clean anonymization — on a *floor* sample (~7 demos via
+search, not the full set). The value engine is real. Expect higher fidelity in Phase 1
+once full per-rep demo enumeration is available.
+
+**Carry-forward for Phase 1:** fix the `list_meetings` / `meetings`-table Supabase error
+so per-rep demos can be enumerated cleanly (blocks the "whose demos" scoping, not the
+extraction quality).
