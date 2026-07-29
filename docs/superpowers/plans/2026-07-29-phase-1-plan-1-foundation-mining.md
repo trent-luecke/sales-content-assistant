@@ -36,15 +36,27 @@ Provision the dedicated SCA project and the isolated read path into the RAG. Hum
 
 At supabase.com → New Project (name `sales-content-assistant`). When ready: Project Settings → API → copy the **Project URL** and the **`service_role`** key.
 
-- [ ] **Step 2: Human — create a read-only role/key in the RAG project**
+- [ ] **Step 2: Human — obtain the RAG read credential**
 
-In the *existing* RAG project (`jffuedeczfehgjzjldvm`) → SQL editor, run:
-```sql
-create role sca_readonly nologin;
-grant usage on schema public to sca_readonly;
-grant select on public.meetings, public.chunks to sca_readonly;
-```
-Then create a limited API key for it (Project Settings → API keys → new publishable/secret key scoped to `sca_readonly` if the project supports scoped keys; otherwise use the RAG `anon` key with an RLS `select` policy for `sca_readonly`). Record it as `RAG_SUPABASE_READONLY_KEY`. If scoped keys aren't available on the plan, fall back to the RAG service key **read-only by convention** and note the compromise in `db/schema.sql` comments.
+Supabase's REST API keys map to fixed Postgres roles (`anon` / `service_role`); you cannot
+mint a REST key bound to a custom read-only role. So there are two real options:
+
+- **Default (Plan 1): reuse the RAG `service_role` key, used read-only by code.** The SCA is a
+  server-only app; the key never reaches a browser, and `lib/mining.ts` only ever issues
+  SELECTs. The primary isolation benefit still holds — the SCA runs no migrations/writes
+  against the RAG, and its own data lives in its own project. Record the RAG project URL
+  (`https://jffuedeczfehgjzjldvm.supabase.co`) as `RAG_SUPABASE_URL` and the RAG `service_role`
+  key (from the RAG project's Settings → API, or its `.env`) as `RAG_SUPABASE_READONLY_KEY`
+  (name reflects how we *use* it).
+- **Stricter (optional upgrade): a true read-only Postgres role over a direct connection.**
+  In the RAG SQL editor: `create role sca_ro login password '…'; grant usage on schema public
+  to sca_ro; grant select on public.meetings, public.chunks to sca_ro;` then connect from the
+  SCA using a Postgres driver (`postgres`/`pg`) with that role's connection string instead of
+  supabase-js for RAG reads. True least-privilege, but changes the RAG-read code path. Defer
+  unless the exposure of a full RAG key in the SCA's server env is unacceptable.
+
+This plan assumes the **Default**. If you choose Stricter, `readRepDemos` in Task 5 uses a
+`postgres` client instead of `ragReadClient()` — otherwise everything else is identical.
 
 - [ ] **Step 3: Write the SCA schema file**
 
