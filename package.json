@@ -12,11 +12,13 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.23",
     "@slack/web-api": "^8.0.0",
+    "@supabase/supabase-js": "^2.111.0",
     "@vercel/functions": "^3.7.6",
     "ai": "^7.0.41",
     "next": "16.2.12",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20",
