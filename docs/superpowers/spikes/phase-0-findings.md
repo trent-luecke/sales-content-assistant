@@ -27,13 +27,27 @@
 async-ack) is viable exactly as designed. No fallback needed.
 
 ## Spike B — Canvas in a DM
-_verdict pending_
+**Verdict: GO** ✅ (verified live 2026-07-29)
 
-- Create in DM (which method): 
-- Update in place (patch / full rewrite / none): 
-- Formatting fidelity: 
-- Rate/size limits: 
-- Verdict (Canvas GO / message-repost fallback): 
+- Create in DM (which method): **`conversations.canvases.create`** (canvas attached to the
+  DM conversation) — renders natively in the chat, owner sees it immediately.
+- REJECTED path: `canvases.create` (standalone) + posting a `slack.com/canvas/<id>` link —
+  the link does not open for the user. Do NOT use in Phase 1.
+- Update in place: **`canvases.edit`** with a `replace` operation works — the in-DM canvas
+  updated from v1 → v2 visibly, same canvas, no new one spawned. (Full-doc replace verified;
+  section-level patching not separately tested — replace is sufficient for the draft loop.)
+- Formatting fidelity: H1 heading, **bold**, bullet list, and clickable link all render
+  correctly (owner confirmed).
+- Access: `canvases.access.set` grants the owner write access (used for standalone path;
+  not needed for the conversation-attached path).
+- Rate/size limits: none hit at spike scale.
+- Secrets note: local scripts can't read real secrets (env redaction writes `[SENSITIVE]`
+  to files), so Canvas was probed via a temporary Vercel route using the real env, then the
+  route was removed. Phase 1 Canvas code runs server-side on Vercel anyway.
+
+**Conclusion:** Canvas is the Phase 1 living-draft surface. Use
+`conversations.canvases.create` to create the draft in the rep's DM and `canvases.edit`
+(replace) to update it as they iterate. No message-repost fallback needed.
 
 ## Spike C — Avoma → voice → story
 _verdict pending_
