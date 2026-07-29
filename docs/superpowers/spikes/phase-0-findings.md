@@ -8,17 +8,23 @@
 - NOTE: Deployment Protection (Vercel Authentication) must be OFF for the Slack webhook to be reachable. Security boundary is Slack signature verification (Task 1), not Vercel Auth.
 
 ## Spike A — Slack async-ack on Vercel
-_automated checks passed; awaiting live DM test_
+**Verdict: GO** ✅ (verified live 2026-07-29)
 
 - Preview URL under test: https://sales-content-assistant-kti0qsr90-tluecke616-3993s-projects.vercel.app
 - Slack events endpoint: `/api/slack/events`
 - Health on preview: 200 ✅ (publicly reachable)
 - Unsigned POST rejected: 401 ✅ (signature verification live on deployed fn)
-- Ack latency (<3s?): _pending live test_
-- Reply latency: _pending live test_
-- Dedup on retries: _pending live test_
+- URL verification: Slack showed "Verified" ✅ (challenge acked within 3s)
+- Ack latency (<3s?): YES — Slack Verified + no retry storms observed
+- Reply latency: bot replied in-thread within seconds ("Received: 'hello spike'")
+- Dedup on retries: single reply, no duplicates (in-instance `seen` set + retry-safe by
+  design; not yet stress-tested with rapid-fire messages)
+- Logs: clean `info`-level POST completions, zero errors
 - Gotchas: preview URL changes on every redeploy — update Slack Request URL if redeployed.
-- Verdict: _pending_
+  For Phase 1, alias to a stable domain (or use production env) so the Slack URL is fixed.
+
+**Conclusion:** The conversational-bot architecture (Vercel + Events API + `waitUntil`
+async-ack) is viable exactly as designed. No fallback needed.
 
 ## Spike B — Canvas in a DM
 _verdict pending_
