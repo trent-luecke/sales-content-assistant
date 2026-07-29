@@ -8,12 +8,17 @@
 - NOTE: Deployment Protection (Vercel Authentication) must be OFF for the Slack webhook to be reachable. Security boundary is Slack signature verification (Task 1), not Vercel Auth.
 
 ## Spike A — Slack async-ack on Vercel
-_verdict pending_
+_automated checks passed; awaiting live DM test_
 
-- Ack latency (<3s?): 
-- Reply latency: 
-- Dedup on retries: 
-- Gotchas: 
+- Preview URL under test: https://sales-content-assistant-kti0qsr90-tluecke616-3993s-projects.vercel.app
+- Slack events endpoint: `/api/slack/events`
+- Health on preview: 200 ✅ (publicly reachable)
+- Unsigned POST rejected: 401 ✅ (signature verification live on deployed fn)
+- Ack latency (<3s?): _pending live test_
+- Reply latency: _pending live test_
+- Dedup on retries: _pending live test_
+- Gotchas: preview URL changes on every redeploy — update Slack Request URL if redeployed.
+- Verdict: _pending_
 
 ## Spike B — Canvas in a DM
 _verdict pending_
