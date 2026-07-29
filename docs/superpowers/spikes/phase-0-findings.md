@@ -10,8 +10,12 @@
 ## Phase 0 result: ALL THREE GO ✅
 Async-ack (A), Canvas-in-DM (B), and voice/story extraction (C) all validated on real
 infrastructure/data. The architecture in the design spec holds with no fallbacks needed.
-One carry-forward blocker for Phase 1: repair the Avoma RAG `list_meetings` Supabase error
-(per-rep demo scoping). Details in each section below.
+Carry-forward blocker for Phase 1 — **RESOLVED 2026-07-29** (see note below): the Avoma RAG
+`list_meetings` failure was NOT Supabase; it was the client building ilike patterns with raw
+`%` wildcards, which 1101'd at Cloudflare's edge. Fixed in `Avoma-Ingest-Chris`
+(branch `fix/list-meetings-ilike-wildcard-encoding`, commit f960eb8). Verified live: per-rep
+enumeration works (Chris=50 demos, Trent=17). Pending: merge + restart the MCP server so the
+running instance loads the fix.
 
 ---
 
@@ -64,12 +68,14 @@ _artifacts drafted; awaiting owner scoring_
   Chris is a real rep + Trent's own brain-dump example, so Trent can judge authenticity).
 - Transcript source used: **`search_transcripts` MCP tool** (works). Gathered Chris's
   turns across ~7 demos by filtering search results to his labeled turns.
-- **`list_meetings` is DOWN** — the `meetings`-table read throws a Supabase/Cloudflare
-  1101 "Worker threw exception" (the `search_chunks` RPC is fine). Code in
-  `Avoma-Ingest-Chris/api/retrieval.py` is well-formed; this is a Supabase platform/table
-  issue on Trent's RAG. **Phase 1 dependency risk:** per-rep demo scoping relies on this
-  path — must be fixed (Supabase dashboard → logs / RLS on `meetings`) before Phase 1
-  can cleanly pull "this rep's demos."
+- **`list_meetings` was DOWN — now FIXED (2026-07-29).** Root cause (isolated via systematic
+  debugging): the `rep`/`prospect` filters built ilike patterns with raw `%` wildcards
+  (`rep_name=ilike.%Trent%`). Raw `%` in a URL query string is invalid percent-encoding, so
+  Supabase's Cloudflare edge threw a 1101 *before* Postgres — which is why unfiltered queries
+  and the `search_chunks` RPC (POST body, no URL pattern) worked but any name filter 500'd.
+  Fix: use PostgREST's native `*` wildcard (`Avoma-Ingest-Chris` commit f960eb8, +regression
+  test). Verified live against Supabase. **Remaining:** merge the branch and restart the
+  running MCP server instance (it has the old code in memory).
 - Extraction done natively by Claude in-session (env redaction blocks a local script
   from reading ANTHROPIC_API_KEY; production runs this server-side on Vercel).
 - Artifacts: `voice-profile-chris.md`, `story-candidate-chris.md`.
