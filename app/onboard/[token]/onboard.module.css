@@ -1,38 +1,215 @@
-.wrap {
-  max-width: 640px;
-  margin: 0 auto;
-  padding: 2rem 1.25rem 4rem;
-  font: 15px/1.5 system-ui, -apple-system, sans-serif;
+/* TeamBuildr brand tokens (pulled from teambuildr.com) */
+.page {
+  --tb-orange: #ff6600;
+  --tb-orange-deep: #ff4500;
+  --tb-ink: #1e212e;
+  --tb-ink-soft: #31353a;
+  --tb-muted: #666666;
+  --tb-line: #e6e6ea;
+  --tb-bg: #f6f6f4;
+  --tb-card: #ffffff;
+
+  min-height: 100vh;
+  background:
+    radial-gradient(60rem 40rem at 50% -12rem, rgba(255, 102, 0, 0.08), transparent 60%),
+    var(--tb-bg);
+  color: var(--tb-ink);
+  font-family: var(--font-figtree), system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  padding: 3rem 1.25rem 5rem;
+  box-sizing: border-box;
 }
-.h1 { font-size: 1.6rem; margin: 0 0 0.25rem; }
-.sub { color: #666; margin: 0 0 2rem; }
-.status { padding: 2rem 0; color: #666; }
+
+.wrap {
+  max-width: 620px;
+  margin: 0 auto;
+  background: var(--tb-card);
+  border: 1px solid var(--tb-line);
+  border-radius: 18px;
+  padding: 2.25rem 2rem 2.75rem;
+  box-shadow: 0 1px 2px rgba(30, 33, 46, 0.04), 0 18px 40px -24px rgba(30, 33, 46, 0.25);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 2rem;
+}
+.logo {
+  height: 26px;
+  width: auto;
+}
+.kicker {
+  margin-left: auto;
+  font-size: 0.7rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--tb-orange);
+}
+
+.h1 {
+  font-size: 1.85rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.4rem;
+  color: var(--tb-ink);
+}
+.sub {
+  color: var(--tb-muted);
+  margin: 0 0 2rem;
+  max-width: 46ch;
+}
+
+/* ── Loading state ───────────────────────────────────────────── */
+.loader {
+  padding: 2.5rem 0 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 1.4rem;
+}
+.loaderBar {
+  width: 100%;
+  max-width: 260px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--tb-line);
+  overflow: hidden;
+}
+.loaderBar span {
+  display: block;
+  height: 100%;
+  width: 40%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--tb-orange), var(--tb-orange-deep));
+  animation: slide 1.25s ease-in-out infinite;
+}
+@keyframes slide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+.loaderLabel {
+  margin: 0;
+  color: var(--tb-ink-soft);
+  font-weight: 600;
+}
+.quote {
+  margin: 0;
+  max-width: 34ch;
+  min-height: 3.5rem;
+  animation: fadeIn 0.5s ease both;
+}
+.quoteLine {
+  display: block;
+  font-size: 1.05rem;
+  font-style: italic;
+  color: var(--tb-ink);
+}
+.quoteCite {
+  display: block;
+  margin-top: 0.4rem;
+  font-style: normal;
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  color: var(--tb-muted);
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Form ────────────────────────────────────────────────────── */
 .field { margin-bottom: 1.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
-.label { font-weight: 600; }
-.hint { color: #888; font-size: 0.85rem; }
+.label { font-weight: 700; color: var(--tb-ink); }
+.hint { color: var(--tb-muted); font-size: 0.85rem; }
+
 .input, .textarea {
-  width: 100%; padding: 0.55rem 0.7rem; border: 1px solid #ccc;
-  border-radius: 8px; font: inherit; box-sizing: border-box;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--tb-line);
+  border-radius: 9px;
+  font: inherit;
+  color: var(--tb-ink);
+  background: #fff;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.input:focus, .textarea:focus {
+  outline: none;
+  border-color: var(--tb-orange);
+  box-shadow: 0 0 0 3px rgba(255, 102, 0, 0.15);
 }
 .textarea { resize: vertical; min-height: 4.5rem; }
-.trait { border: 1px solid #e5e5e5; border-radius: 10px; padding: 1rem; margin-bottom: 1rem; }
+
+.trait {
+  border: 1px solid var(--tb-line);
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  background: #fbfbfa;
+}
 .traitHead { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.6rem; }
 .remove {
-  margin-left: auto; background: none; border: none; color: #c00;
-  cursor: pointer; font-size: 0.85rem;
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--tb-muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
 }
+.remove:hover { color: var(--tb-orange-deep); }
 .examples { display: flex; flex-direction: column; gap: 0.4rem; }
+
 .addRow { display: flex; gap: 0.75rem; margin: 0.25rem 0 2rem; }
 .ghost {
-  background: none; border: 1px dashed #bbb; border-radius: 8px;
-  padding: 0.5rem 0.9rem; cursor: pointer; font: inherit; color: #444;
+  background: none;
+  border: 1px dashed #c9c9cf;
+  border-radius: 9px;
+  padding: 0.5rem 0.9rem;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  color: var(--tb-ink-soft);
+  transition: border-color 0.15s ease, color 0.15s ease;
 }
+.ghost:hover { border-color: var(--tb-orange); color: var(--tb-orange); }
+
 .channels { display: flex; gap: 1rem; flex-wrap: wrap; }
-.channel { display: flex; align-items: center; gap: 0.4rem; }
-.submit {
-  background: #111; color: #fff; border: none; border-radius: 10px;
-  padding: 0.8rem 1.4rem; font: inherit; font-weight: 600; cursor: pointer;
+.channel {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.85rem;
+  border: 1px solid var(--tb-line);
+  border-radius: 9px;
+  cursor: pointer;
+  font-weight: 600;
 }
-.submit:disabled { opacity: 0.5; cursor: default; }
-.error { color: #c00; margin-top: 1rem; }
+.channel input { accent-color: var(--tb-orange); }
+
+.submit {
+  background: linear-gradient(180deg, var(--tb-orange), var(--tb-orange-deep));
+  color: #fff;
+  border: none;
+  border-radius: 11px;
+  padding: 0.85rem 1.5rem;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 8px 18px -8px rgba(255, 69, 0, 0.6);
+  transition: transform 0.1s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+.submit:hover { filter: brightness(1.05); }
+.submit:active { transform: translateY(1px); }
+.submit:disabled { opacity: 0.55; cursor: default; box-shadow: none; }
+
+.error { color: var(--tb-orange-deep); margin-top: 1rem; font-weight: 600; }
+
 .done { padding: 3rem 0; text-align: center; }
+.done h2 { font-size: 1.5rem; font-weight: 800; color: var(--tb-ink); margin: 0 0 0.5rem; }
+.done p { color: var(--tb-muted); margin: 0; }

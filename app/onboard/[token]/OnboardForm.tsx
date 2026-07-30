@@ -6,6 +6,18 @@ import styles from "./onboard.module.css";
 
 const CHANNELS = ["LinkedIn", "Instagram"];
 
+// Shown one at a time (5s each) while the demo skim runs, so the wait reads as
+// "working" rather than "frozen." Short attributed lines + originals — swap
+// freely; keep them short to stay clear of reproducing full copyrighted bits.
+const LOADING_QUOTES: { line: string; src: string | null }[] = [
+  { line: "Coffee's for closers.", src: "Glengarry Glen Ross" },
+  { line: "A-B-C. Always Be Closing.", src: "Glengarry Glen Ross" },
+  { line: "Would I rather be feared or loved? Both.", src: "The Office" },
+  { line: "Every closer was once a cold opener.", src: null },
+  { line: "Turning “um, so, basically…” into your best hook.", src: null },
+  { line: "Great posts start with great calls.", src: null },
+];
+
 type Phase = "skimming" | "editing" | "saving" | "done" | "error";
 
 export function OnboardForm({
@@ -18,6 +30,17 @@ export function OnboardForm({
   const [draft, setDraft] = useState<DraftProfile | null>(initialDraft);
   const [phase, setPhase] = useState<Phase>(initialDraft ? "editing" : "skimming");
   const [errorMsg, setErrorMsg] = useState("");
+  const [quoteIdx, setQuoteIdx] = useState(0);
+
+  // Rotate the loading quotes while (and only while) the skim is running.
+  useEffect(() => {
+    if (phase !== "skimming") return;
+    const id = setInterval(
+      () => setQuoteIdx((i) => (i + 1) % LOADING_QUOTES.length),
+      5000,
+    );
+    return () => clearInterval(id);
+  }, [phase]);
 
   useEffect(() => {
     if (initialDraft) return; // already have a draft; no skim needed
@@ -48,7 +71,19 @@ export function OnboardForm({
   }, [token, initialDraft]);
 
   if (phase === "skimming") {
-    return <p className={styles.status}>Reading your demos and drafting your voice…</p>;
+    const q = LOADING_QUOTES[quoteIdx];
+    return (
+      <div className={styles.loader} aria-live="polite" aria-busy="true">
+        <div className={styles.loaderBar}>
+          <span />
+        </div>
+        <p className={styles.loaderLabel}>Reading your demos and drafting your voice…</p>
+        <blockquote key={quoteIdx} className={styles.quote}>
+          <span className={styles.quoteLine}>“{q.line}”</span>
+          {q.src ? <cite className={styles.quoteCite}>— {q.src}</cite> : null}
+        </blockquote>
+      </div>
+    );
   }
   if (phase === "done") {
     return (
@@ -109,7 +144,7 @@ export function OnboardForm({
       }}
     >
       <div className={styles.field}>
-        <label className={styles.label}>Your name</label>
+        <label className={styles.label}>My name</label>
         <input
           className={styles.input}
           value={draft.displayName}
@@ -118,9 +153,9 @@ export function OnboardForm({
       </div>
 
       <div className={styles.field}>
-        <label className={styles.label}>Voice traits</label>
+        <label className={styles.label}>My voice</label>
         <span className={styles.hint}>
-          How you actually sound, pulled from your demos. Fix any that feel off.
+          How I actually sound, pulled from my demos — I&apos;ll fix anything that feels off.
         </span>
       </div>
       {draft.traits.map((t, i) => (
@@ -173,8 +208,8 @@ export function OnboardForm({
       </div>
 
       <div className={styles.field}>
-        <label className={styles.label}>Background</label>
-        <span className={styles.hint}>What you did before / what you know deeply.</span>
+        <label className={styles.label}>My background</label>
+        <span className={styles.hint}>What I did before / what I know deeply.</span>
         <textarea
           className={styles.textarea}
           value={draft.background}
@@ -183,8 +218,8 @@ export function OnboardForm({
       </div>
 
       <div className={styles.field}>
-        <label className={styles.label}>Your angle</label>
-        <span className={styles.hint}>The distinctive POV only you bring.</span>
+        <label className={styles.label}>My angle</label>
+        <span className={styles.hint}>The distinctive POV only I bring.</span>
         <textarea
           className={styles.textarea}
           value={draft.angle}
@@ -193,7 +228,7 @@ export function OnboardForm({
       </div>
 
       <div className={styles.field}>
-        <label className={styles.label}>Where you post</label>
+        <label className={styles.label}>Where I post</label>
         <div className={styles.channels}>
           {CHANNELS.map((c) => (
             <label key={c} className={styles.channel}>
@@ -209,8 +244,8 @@ export function OnboardForm({
       </div>
 
       <div className={styles.field}>
-        <label className={styles.label}>A post you admire (optional)</label>
-        <span className={styles.hint}>Paste one whose style you&apos;d like to echo.</span>
+        <label className={styles.label}>A post I admire (optional)</label>
+        <span className={styles.hint}>One whose style I&apos;d like to echo.</span>
         <textarea
           className={styles.textarea}
           value={draft.admiredPost}

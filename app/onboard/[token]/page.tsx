@@ -20,13 +20,20 @@ export default async function OnboardPage({
   const initialDraft = hasBeenSkimmed(profile) ? draftFromProfile(profile) : null;
 
   return (
-    <main className={styles.wrap}>
-      <h1 className={styles.h1}>Let&apos;s tune your voice</h1>
-      <p className={styles.sub}>
-        We read a few of your demos and took a first guess. Tighten anything that
-        doesn&apos;t sound like you, add a couple of specifics, and you&apos;re set.
-      </p>
-      <OnboardForm token={token} initialDraft={initialDraft} />
+    <main className={styles.page}>
+      <div className={styles.wrap}>
+        <header className={styles.header}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/tblogo.svg" alt="TeamBuildr" className={styles.logo} />
+          <span className={styles.kicker}>Sales Content Assistant</span>
+        </header>
+        <h1 className={styles.h1}>Let&apos;s tune your voice</h1>
+        <p className={styles.sub}>
+          I read a few of your demos and took a first guess. Tighten anything that
+          doesn&apos;t sound like you, add a couple of specifics, and you&apos;re set.
+        </p>
+        <OnboardForm token={token} initialDraft={initialDraft} />
+      </div>
     </main>
   );
 }
