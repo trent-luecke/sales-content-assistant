@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DraftProfile, VoiceTraitInput } from "@/lib/onboarding";
 import styles from "./onboard.module.css";
 
@@ -32,6 +32,15 @@ export function OnboardForm({
   const [errorMsg, setErrorMsg] = useState("");
   const [quoteIdx, setQuoteIdx] = useState(0);
 
+  // Stable per-trait keys, kept in lockstep with draft.traits. Using these as
+  // React keys (instead of the array index) keeps input focus on the right row
+  // when a trait is removed mid-list. Examples are append-only, so their index
+  // keys are safe.
+  const traitKeyCounter = useRef(0);
+  const [traitKeys, setTraitKeys] = useState<number[]>(() =>
+    initialDraft ? initialDraft.traits.map(() => traitKeyCounter.current++) : [],
+  );
+
   // Rotate the loading quotes while (and only while) the skim is running.
   useEffect(() => {
     if (phase !== "skimming") return;
@@ -56,6 +65,7 @@ export function OnboardForm({
         const d = (await res.json()) as DraftProfile;
         if (!cancelled) {
           setDraft(d);
+          setTraitKeys(d.traits.map(() => traitKeyCounter.current++));
           setPhase("editing");
         }
       } catch (e) {
@@ -103,11 +113,15 @@ export function OnboardForm({
   const setTrait = (i: number, patch: Partial<VoiceTraitInput>) =>
     set({ traits: draft.traits.map((t, j) => (j === i ? { ...t, ...patch } : t)) });
 
-  const addTrait = () =>
+  const addTrait = () => {
     set({ traits: [...draft.traits, { name: "", description: "", examples: [""] }] });
+    setTraitKeys((k) => [...k, traitKeyCounter.current++]);
+  };
 
-  const removeTrait = (i: number) =>
+  const removeTrait = (i: number) => {
     set({ traits: draft.traits.filter((_, j) => j !== i) });
+    setTraitKeys((k) => k.filter((_, j) => j !== i));
+  };
 
   const toggleChannel = (c: string) =>
     set({
@@ -159,7 +173,7 @@ export function OnboardForm({
         </span>
       </div>
       {draft.traits.map((t, i) => (
-        <div key={i} className={styles.trait}>
+        <div key={traitKeys[i] ?? i} className={styles.trait}>
           <div className={styles.traitHead}>
             <input
               className={styles.input}

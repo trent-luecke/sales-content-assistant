@@ -16,6 +16,44 @@ export interface DraftProfile {
   admiredPost: string;
 }
 
+// Single source of truth for field bounds. The save schema validates against
+// these, and clampDraft trims skim/stored drafts to them — so a rep who accepts
+// the AI draft unmodified can never trip a save-validation error on content the
+// model produced (the skim schema doesn't cap output length; this does).
+export const LIMITS = {
+  displayName: 120,
+  traitName: 120,
+  traitDescription: 500,
+  traitExample: 1000,
+  examplesPerTrait: 10,
+  traits: 12,
+  background: 4000,
+  angle: 4000,
+  channel: 60,
+  channels: 10,
+  admiredPost: 8000,
+} as const;
+
+const cut = (s: string, n: number): string => (s.length > n ? s.slice(0, n) : s);
+
+// Trim a draft to the save limits (no-op when already within bounds).
+export function clampDraft(d: DraftProfile): DraftProfile {
+  return {
+    displayName: cut(d.displayName, LIMITS.displayName),
+    traits: d.traits.slice(0, LIMITS.traits).map((t) => ({
+      name: cut(t.name, LIMITS.traitName),
+      description: cut(t.description, LIMITS.traitDescription),
+      examples: t.examples
+        .slice(0, LIMITS.examplesPerTrait)
+        .map((e) => cut(e, LIMITS.traitExample)),
+    })),
+    background: cut(d.background, LIMITS.background),
+    angle: cut(d.angle, LIMITS.angle),
+    channels: d.channels.slice(0, LIMITS.channels).map((c) => cut(c, LIMITS.channel)),
+    admiredPost: cut(d.admiredPost, LIMITS.admiredPost),
+  };
+}
+
 // True once a skim (or a prior save) has populated the voice profile — the page
 // then pre-fills from stored data instead of re-running the expensive skim.
 export function hasBeenSkimmed(p: Profile): boolean {
@@ -23,46 +61,46 @@ export function hasBeenSkimmed(p: Profile): boolean {
 }
 
 export function draftFromProfile(p: Profile): DraftProfile {
-  return {
+  return clampDraft({
     displayName: p.display_name ?? "",
     traits: (p.voice_traits as VoiceTraitInput[]) ?? [],
     background: p.background ?? "",
     angle: p.angle ?? "",
     channels: (p.channels as string[]) ?? [],
     admiredPost: p.admired_post ?? "",
-  };
+  });
 }
 
 export function draftFromVoice(
   p: Profile,
   voice: { traits: VoiceTraitInput[]; background: string; angle: string },
 ): DraftProfile {
-  return {
+  return clampDraft({
     displayName: p.display_name ?? "",
     traits: voice.traits,
     background: voice.background,
     angle: voice.angle,
     channels: [],
     admiredPost: "",
-  };
+  });
 }
 
 const saveSchema = z.object({
   token: z.string().min(1),
-  displayName: z.string().max(120).default(""),
+  displayName: z.string().max(LIMITS.displayName).default(""),
   traits: z
     .array(
       z.object({
-        name: z.string().max(120),
-        description: z.string().max(500),
-        examples: z.array(z.string().max(1000)).max(10),
+        name: z.string().max(LIMITS.traitName),
+        description: z.string().max(LIMITS.traitDescription),
+        examples: z.array(z.string().max(LIMITS.traitExample)).max(LIMITS.examplesPerTrait),
       }),
     )
-    .max(12),
-  background: z.string().max(4000).default(""),
-  angle: z.string().max(4000).default(""),
-  channels: z.array(z.string().max(60)).max(10).default([]),
-  admiredPost: z.string().max(8000).default(""),
+    .max(LIMITS.traits),
+  background: z.string().max(LIMITS.background).default(""),
+  angle: z.string().max(LIMITS.angle).default(""),
+  channels: z.array(z.string().max(LIMITS.channel)).max(LIMITS.channels).default([]),
+  admiredPost: z.string().max(LIMITS.admiredPost).default(""),
 });
 
 export type SavePayload = z.infer<typeof saveSchema>;

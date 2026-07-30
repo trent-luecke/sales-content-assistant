@@ -3,8 +3,10 @@ import {
   hasBeenSkimmed,
   draftFromProfile,
   draftFromVoice,
+  clampDraft,
   parseSavePayload,
   savePayloadToPatch,
+  LIMITS,
 } from "@/lib/onboarding";
 import type { Profile } from "@/lib/profiles";
 
@@ -68,6 +70,63 @@ describe("draftFromVoice", () => {
       channels: [],
       admiredPost: "",
     });
+  });
+});
+
+describe("clampDraft", () => {
+  it("clamps oversized fields to the save limits", () => {
+    const clamped = clampDraft({
+      displayName: "n".repeat(LIMITS.displayName + 50),
+      traits: [
+        {
+          name: "t".repeat(LIMITS.traitName + 50),
+          description: "d".repeat(LIMITS.traitDescription + 200),
+          examples: Array.from({ length: LIMITS.examplesPerTrait + 5 }, () => "x".repeat(LIMITS.traitExample + 100)),
+        },
+      ],
+      background: "b".repeat(LIMITS.background + 500),
+      angle: "a".repeat(LIMITS.angle + 500),
+      channels: ["LinkedIn"],
+      admiredPost: "",
+    });
+    expect(clamped.displayName.length).toBe(LIMITS.displayName);
+    expect(clamped.traits[0].name.length).toBe(LIMITS.traitName);
+    expect(clamped.traits[0].description.length).toBe(LIMITS.traitDescription);
+    expect(clamped.traits[0].examples.length).toBe(LIMITS.examplesPerTrait);
+    expect(clamped.traits[0].examples[0].length).toBe(LIMITS.traitExample);
+    expect(clamped.background.length).toBe(LIMITS.background);
+    expect(clamped.angle.length).toBe(LIMITS.angle);
+  });
+
+  it("leaves an in-bounds draft untouched", () => {
+    const d = {
+      displayName: "Trent",
+      traits: [{ name: "Direct", description: "d", examples: ["e"] }],
+      background: "bg",
+      angle: "angle",
+      channels: ["LinkedIn"],
+      admiredPost: "post",
+    };
+    expect(clampDraft(d)).toEqual(d);
+  });
+});
+
+describe("draftFromVoice + save round-trip (M1)", () => {
+  it("produces a draft that always passes parseSavePayload, even from oversized voice", () => {
+    const oversized = draftFromVoice(baseProfile({ display_name: "Trent" }), {
+      traits: [
+        {
+          name: "Verbose",
+          description: "d".repeat(LIMITS.traitDescription + 300),
+          examples: Array.from({ length: LIMITS.examplesPerTrait + 8 }, (_, i) => `line ${i}`),
+        },
+      ],
+      background: "b".repeat(LIMITS.background + 1000),
+      angle: "a".repeat(LIMITS.angle + 1000),
+    });
+    // The exact shape the form POSTs to /api/onboard/save on an unmodified accept.
+    const r = parseSavePayload({ token: "tok", ...oversized });
+    expect(r.ok).toBe(true);
   });
 });
 
