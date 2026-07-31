@@ -39,6 +39,21 @@ export async function existingHooks(repId: string): Promise<string[]> {
   return (data ?? []).map((r) => r.hook as string);
 }
 
+// The set of demo meetingIds this rep has already produced ideas from — read
+// from source_ref. Lets refill skip demos it has already mined (no ledger table).
+export async function minedMeetingIds(repId: string): Promise<string[]> {
+  const { data, error } = await scaClient()
+    .from("sca_ideas").select("source_ref").eq("rep_id", repId);
+  if (error) throw error;
+  const ids = new Set<string>();
+  for (const row of data ?? []) {
+    const ref = (row as { source_ref?: Record<string, unknown> }).source_ref;
+    const mid = ref?.meetingId;
+    if (typeof mid === "string" && mid.length > 0) ids.add(mid);
+  }
+  return [...ids];
+}
+
 export async function insertIdeas(ideas: Idea[]): Promise<void> {
   if (ideas.length === 0) return;
   const { error } = await scaClient().from("sca_ideas").insert(

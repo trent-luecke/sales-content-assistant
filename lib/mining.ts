@@ -21,6 +21,14 @@ export interface RawIdea {
   sourceRef: Record<string, unknown>;
 }
 
+// Pure: keep only demos whose meetingId hasn't already produced ideas. A demo
+// that yielded only organic ideas last time (no meetingId recorded) stays here
+// and gets re-read — hook-level dedup drops any duplicate output downstream.
+export function filterUnminedDemos(demos: DemoTranscript[], minedMeetingIds: string[]): DemoTranscript[] {
+  const mined = new Set(minedMeetingIds);
+  return demos.filter((d) => !mined.has(d.meetingId));
+}
+
 // Pure: shape raw AI items into Idea rows; drop empty hooks.
 export function toIdeas(repId: string, raw: RawIdea[]): Idea[] {
   return raw

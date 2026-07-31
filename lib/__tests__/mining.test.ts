@@ -1,5 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { toIdeas } from "@/lib/mining";
+import { toIdeas, filterUnminedDemos, type DemoTranscript } from "@/lib/mining";
+
+describe("filterUnminedDemos", () => {
+  const demo = (id: string): DemoTranscript => ({ meetingId: id, title: "", date: "", repTurns: [] });
+  it("drops demos already mined, keeps the rest in order", () => {
+    expect(filterUnminedDemos([demo("m1"), demo("m2"), demo("m3")], ["m2"]).map((d) => d.meetingId))
+      .toEqual(["m1", "m3"]);
+  });
+  it("returns all demos when nothing has been mined yet", () => {
+    expect(filterUnminedDemos([demo("m1")], []).map((d) => d.meetingId)).toEqual(["m1"]);
+  });
+});
 
 describe("toIdeas", () => {
   it("maps raw AI items to Idea rows with rep_id and candidate defaults", () => {
