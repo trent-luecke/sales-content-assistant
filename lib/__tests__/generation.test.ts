@@ -61,6 +61,16 @@ describe("forbiddenNames", () => {
     const names = forbiddenNames(moment({ title: "Chris", speakers: ["chris", "CHRIS"] }));
     expect(names.filter((n) => n.toLowerCase() === "chris")).toHaveLength(1);
   });
+  it("splits title names on commas without requiring leading whitespace", () => {
+    const names = forbiddenNames(moment({ title: "Gretchen, Chris, and Dana" }));
+    expect(names).toContain("Gretchen");
+    expect(names).toContain("Chris");
+    expect(names).toContain("Dana");
+  });
+  it("includes 2-character speaker names", () => {
+    const names = forbiddenNames(moment({ title: "", speakers: ["Al"] }));
+    expect(names).toContain("Al");
+  });
 });
 
 describe("redact", () => {
@@ -73,13 +83,18 @@ describe("redact", () => {
     expect(redact("gretchen's crew loved it", ["Gretchen"])).toBe("[someone]'s crew loved it");
   });
   it("does not touch a name embedded in another word", () => {
-    expect(redact("the according plan", ["Acme"])).toBe("the according plan");
+    expect(redact("Acmeplex shipped", ["Acme"])).toBe("Acmeplex shipped");
     expect(redact("Acme shipped", ["Acme"])).toBe("[someone] shipped");
   });
   it("leaves clean text untouched", () => {
     expect(redact("a strength coach I met", ["Gretchen", "Acme"])).toBe(
       "a strength coach I met",
     );
+  });
+  it("redacts longer names first so fragments are not exposed", () => {
+    const result = redact("Chris Reynolds gave a great demo", ["Chris", "Chris Reynolds"]);
+    expect(result).toBe("[someone] gave a great demo");
+    expect(result).not.toMatch(/Reynolds/);
   });
 });
 

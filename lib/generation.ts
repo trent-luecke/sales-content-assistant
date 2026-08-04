@@ -18,7 +18,7 @@ interface VoiceTraitish {
 // "Gretchen Collins and Chris Reynolds" or "Bre / Trent".
 function splitTitleNames(title: string): string[] {
   return title
-    .split(/\s+(?:and|&|\/|,|\||with|x)\s+|\s*[/|]\s*/i)
+    .split(/\s*(?:[,&/|]|\band\b|\bwith\b|\bx\b)\s*/i)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }
@@ -34,7 +34,7 @@ export function forbiddenNames(moment: DemoMoment): string[] {
   };
   const candidates = [...splitTitleNames(moment.title), ...moment.speakers]
     .map((s) => s.trim())
-    .filter((s) => s.length > 2 && !isRep(s));
+    .filter((s) => s.length >= 2 && !isRep(s));
 
   const seen = new Set<string>();
   const out: string[] = [];
@@ -52,7 +52,10 @@ export function forbiddenNames(moment: DemoMoment): string[] {
 // because the boundary lookahead treats the apostrophe as a non-word char.
 export function redact(text: string, names: string[]): string {
   let out = text;
-  for (const raw of names) {
+  // Longest names first, so a full name is consumed before any of its shorter
+  // components can partially match and leave a fragment exposed.
+  const sorted = [...names].sort((a, b) => b.length - a.length);
+  for (const raw of sorted) {
     const name = raw.trim();
     if (name.length < 1) continue;
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
