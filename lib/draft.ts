@@ -54,53 +54,63 @@ export async function handleDraftThis(payload: unknown): Promise<void> {
     return;
   }
 
-  const profile = await getProfileBySlackUser(slackUserId);
-  if (!profile) {
-    await safePost(channel, undefined, "I couldn't find your profile yet — finish onboarding and try again.");
-    return;
-  }
-
-  const claim = await claimIdea(ideaId, profile.id);
-  if (claim.outcome === "already_used") {
-    const existingTs = await threadTsForIdea(profile.id, ideaId);
-    await safePost(channel, existingTs, "You're already drafting this one 👆");
-    return;
-  }
-  if (claim.outcome === "not_found") {
-    await safePost(channel, undefined, "Hmm, I couldn't find that idea — grab another from your latest digest.");
-    return;
-  }
-
-  const idea = claim.idea;
+  // Runs post-ack inside waitUntil — this function must never throw. An outer
+  // try guards the pre-claim reads (profile resolve, claim, thread lookup); the
+  // inner try guards the claimed path and additionally releases the claim.
   try {
-    const meetingId =
-      typeof (idea.source_ref as { meetingId?: unknown })?.meetingId === "string"
-        ? ((idea.source_ref as { meetingId: string }).meetingId)
-        : null;
-    const moment = idea.source === "demo" && meetingId ? await readDemoMoment(meetingId) : null;
+    const profile = await getProfileBySlackUser(slackUserId);
+    if (!profile) {
+      await safePost(channel, undefined, "I couldn't find your profile yet — finish onboarding and try again.");
+      return;
+    }
 
-    const { body, wasRedacted } = await generateDraft(idea, profile, moment);
-    const canvasId = await createCanvasInDM(channel, draftTitle(idea.hook), body);
+    const claim = await claimIdea(ideaId, profile.id);
+    if (claim.outcome === "already_used") {
+      const existingTs = await threadTsForIdea(profile.id, ideaId);
+      await safePost(channel, existingTs, "You're already drafting this one 👆");
+      return;
+    }
+    if (claim.outcome === "not_found") {
+      await safePost(channel, undefined, "Hmm, I couldn't find that idea — grab another from your latest digest.");
+      return;
+    }
 
-    const posted = await slack.chat.postMessage({
-      channel,
-      text: wasRedacted ? OPENER + REDACTED_NOTE : OPENER,
-    });
-    const threadTs = posted.ts;
-    if (!threadTs) throw new Error("thread opener returned no ts");
+    const idea = claim.idea;
+    try {
+      const meetingId =
+        typeof (idea.source_ref as { meetingId?: unknown })?.meetingId === "string"
+          ? (idea.source_ref as { meetingId: string }).meetingId
+          : null;
+      const moment = idea.source === "demo" && meetingId ? await readDemoMoment(meetingId) : null;
 
-    const { error } = await scaClient().from("sca_thread_map").insert({
-      rep_id: profile.id,
-      slack_channel: channel,
-      thread_ts: threadTs,
-      canvas_id: canvasId,
-      idea_id: ideaId,
-    });
-    if (error) throw error;
+      const { body, wasRedacted } = await generateDraft(idea, profile, moment);
+      const canvasId = await createCanvasInDM(channel, draftTitle(idea.hook), body);
+
+      const posted = await slack.chat.postMessage({
+        channel,
+        text: wasRedacted ? OPENER + REDACTED_NOTE : OPENER,
+      });
+      const threadTs = posted.ts;
+      if (!threadTs) throw new Error("thread opener returned no ts");
+
+      const { error } = await scaClient().from("sca_thread_map").insert({
+        rep_id: profile.id,
+        slack_channel: channel,
+        thread_ts: threadTs,
+        canvas_id: canvasId,
+        idea_id: ideaId,
+      });
+      if (error) throw error;
+    } catch (e) {
+      // Post-claim failure: release the claim so the rep can retry; signal them.
+      await setIdeaStatus(ideaId, "candidate").catch(() => {});
+      await safePost(channel, undefined, "Something went wrong drafting that — try again in a sec.");
+      console.error("handleDraftThis failed (post-claim)", { repId: profile.id, ideaId, error: e });
+    }
   } catch (e) {
-    // Release the claim so the rep can retry; signal them. Never rethrow (post-ack).
-    await setIdeaStatus(ideaId, "candidate").catch(() => {});
-    await safePost(channel, undefined, "Something went wrong drafting that — try again in a sec.");
-    console.error("handleDraftThis failed", { repId: profile.id, ideaId, error: e });
+    // Pre-claim failure (profile resolve / claim / thread lookup threw): nothing
+    // was claimed, so nothing to release — just signal the rep and log.
+    await safePost(channel, undefined, "Something went wrong — try again in a sec.");
+    console.error("handleDraftThis failed (pre-claim)", { slackUserId, ideaId, error: e });
   }
 }
