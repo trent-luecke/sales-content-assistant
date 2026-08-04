@@ -20,6 +20,9 @@ export function buildDigestBlocks(ideas: Idea[]): KnownBlock[] {
   ];
 
   ideas.forEach((idea, i) => {
+    if (!idea.id) {
+      throw new Error("buildDigestBlocks: idea is missing an id (cannot build a draft_this button)");
+    }
     if (i > 0) blocks.push({ type: "divider" });
     blocks.push({
       type: "section",
@@ -32,7 +35,7 @@ export function buildDigestBlocks(ideas: Idea[]): KnownBlock[] {
           type: "button",
           text: { type: "plain_text", text: "Draft this" },
           action_id: DRAFT_THIS_ACTION,
-          value: idea.id ?? "",
+          value: idea.id,
         },
       ],
     });

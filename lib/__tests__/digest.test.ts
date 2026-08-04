@@ -59,4 +59,9 @@ describe("buildDigestBlocks", () => {
     // Defensive: assembleAndDeliver skips the empty case, but the shaper stays total.
     expect(types(buildDigestBlocks([]))).toEqual(["section"]);
   });
+
+  it("throws when an idea is missing its id", () => {
+    const noId = { ...mk("x", "hook"), id: undefined } as Idea;
+    expect(() => buildDigestBlocks([noId])).toThrow(/missing an id/);
+  });
 });
