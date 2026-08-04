@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { toIdeas, filterUnminedDemos, type DemoTranscript } from "@/lib/mining";
+import { toIdeas, filterUnminedDemos, isRepSpeaker, type DemoTranscript } from "@/lib/mining";
 
 describe("filterUnminedDemos", () => {
   const demo = (id: string): DemoTranscript => ({ meetingId: id, title: "", date: "", repTurns: [] });
@@ -25,5 +25,19 @@ describe("toIdeas", () => {
   });
   it("drops items with an empty hook", () => {
     expect(toIdeas("r", [{ source: "demo", hook: "  ", rationale: "x", sourceRef: {} }])).toEqual([]);
+  });
+});
+
+describe("isRepSpeaker", () => {
+  it("matches the rep by exact first-name token", () => {
+    expect(isRepSpeaker("Trent Luecke", "trent")).toBe(true);
+    expect(isRepSpeaker("Trent", "trent")).toBe(true);
+  });
+  it("does NOT match a customer whose name merely contains the rep's first name", () => {
+    expect(isRepSpeaker("Christina Vale", "chris")).toBe(false); // the leak-risk case
+    expect(isRepSpeaker("Sal", "al")).toBe(false);
+  });
+  it("never matches when the rep first name is empty", () => {
+    expect(isRepSpeaker("Anyone", "")).toBe(false);
   });
 });

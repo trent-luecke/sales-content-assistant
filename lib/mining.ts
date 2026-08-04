@@ -138,6 +138,15 @@ export async function mineIdeas(
   return toIdeas(repId, safe);
 }
 
+// True if a transcript speaker label is the rep. Token-equality (not substring)
+// so a customer whose name merely CONTAINS the rep's first name (e.g. rep "Chris"
+// vs customer "Christina") is NOT misclassified as the rep — misclassifying a
+// customer as the rep would drop them from the forbidden-name list (a leak risk).
+export function isRepSpeaker(speaker: string, repFirstLower: string): boolean {
+  if (repFirstLower.length === 0) return false;
+  return speaker.toLowerCase().split(/\s+/).includes(repFirstLower);
+}
+
 function namesFromTitle(title: string): string[] {
   // Titles look like "Gretchen Collins and Chris Reynolds" / "Bre / Trent".
   return title.split(/\s+(?:and|&|\/|,)\s+|\s*[/|]\s*/i)
@@ -166,7 +175,7 @@ export async function readDemoMoment(meetingId: string): Promise<DemoMoment | nu
   if (cErr) throw cErr;
   const rows = (chunks ?? []) as { speaker?: string; text?: string }[];
 
-  const repFirstName = (m.rep_name ?? "").split(/\s+/)[0] ?? "";
+  const repFirstName = (m.rep_name ?? "").trim().split(/\s+/)[0] ?? "";
   const repFirst = repFirstName.toLowerCase();
 
   const repTurns: string[] = [];
@@ -174,7 +183,7 @@ export async function readDemoMoment(meetingId: string): Promise<DemoMoment | nu
   for (const c of rows) {
     const speaker = typeof c.speaker === "string" ? c.speaker : "";
     const text = typeof c.text === "string" ? c.text : "";
-    const isRep = speaker.toLowerCase().includes(repFirst) && repFirst.length > 0;
+    const isRep = isRepSpeaker(speaker, repFirst);
     if (isRep) {
       if (text) repTurns.push(text);
     } else if (speaker) {
