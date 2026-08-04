@@ -35,13 +35,24 @@ export function forbiddenNames(moment: DemoMoment): string[] {
     const l = n.toLowerCase();
     return l === rep || (rep.length > 0 && l.startsWith(rep + " "));
   };
-  const candidates = [...splitTitleNames(moment.title), ...moment.speakers]
+
+  // Whole labels: title names ∪ non-rep speaker labels, rep removed.
+  const whole = [...splitTitleNames(moment.title), ...moment.speakers]
     .map((s) => s.trim())
     .filter((s) => s.length >= 2 && !isRep(s));
 
+  // Also forbid each component token (first name / surname) so a casual bare
+  // first name ("Chris" from "Chris Reynolds") is caught by the second-pass
+  // check and the redactor — not only the full label. The rep's own first name
+  // is never forbidden.
+  const tokens = whole
+    .flatMap((n) => n.split(/\s+/))
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2 && t.toLowerCase() !== rep);
+
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const n of candidates) {
+  for (const n of [...whole, ...tokens]) {
     const k = n.toLowerCase();
     if (seen.has(k)) continue;
     seen.add(k);

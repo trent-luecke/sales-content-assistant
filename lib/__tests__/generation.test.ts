@@ -76,6 +76,20 @@ describe("forbiddenNames", () => {
     const names = forbiddenNames(moment({ title: "", speakers: ["Al"] }));
     expect(names).toContain("Al");
   });
+  it("decomposes full names so a bare first name is also forbidden", () => {
+    const names = forbiddenNames(moment({ title: "Chris Reynolds", speakers: [] }));
+    expect(names).toContain("Chris Reynolds");
+    expect(names).toContain("Chris");
+    expect(names).toContain("Reynolds");
+  });
+  it("does not add the rep's own first name as a token", () => {
+    const names = forbiddenNames(moment({ title: "Chris Dana", speakers: [], repFirstName: "Dana" }));
+    // "Chris Dana" is not filtered (doesn't start with "Dana "); its tokens are ["Chris", "Dana"]
+    expect(names).toContain("Chris Dana");
+    expect(names).toContain("Chris");
+    // But "Dana" token is not added because Dana is the rep's first name
+    expect(names).not.toContain("Dana");
+  });
 });
 
 describe("redact", () => {
