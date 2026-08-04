@@ -96,6 +96,11 @@ describe("redact", () => {
     expect(result).toBe("[someone] gave a great demo");
     expect(result).not.toMatch(/Reynolds/);
   });
+  it("redacts fully when two multi-word names overlap on a shared word", () => {
+    const out = redact("Ann Marie Curie visited today", ["Ann Marie", "Marie Curie"]);
+    expect(out).toBe("[someone] visited today");
+    expect(out).not.toMatch(/Ann|Marie|Curie/);
+  });
 });
 
 describe("buildDraftPrompt", () => {

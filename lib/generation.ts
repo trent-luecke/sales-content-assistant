@@ -47,21 +47,42 @@ export function forbiddenNames(moment: DemoMoment): string[] {
   return out;
 }
 
-// Replace each forbidden name (case-insensitive, word-boundary) with a neutral
-// token. A trailing possessive apostrophe survives ("Gretchen's" -> "[someone]'s")
-// because the boundary lookahead treats the apostrophe as a non-word char.
+// Replace every forbidden name (case-insensitive, word-boundary) with a neutral
+// token. Matches are found across the ORIGINAL text for all names first, then
+// overlapping spans are merged and replaced in one pass — so overlapping names
+// (e.g. "Ann Marie" + "Marie Curie") can't leave a fragment exposed. A trailing
+// possessive apostrophe survives ("Gretchen's" -> "[someone]'s") because the
+// boundary lookahead treats the apostrophe as a non-word char.
 export function redact(text: string, names: string[]): string {
-  let out = text;
-  // Longest names first, so a full name is consumed before any of its shorter
-  // components can partially match and leave a fragment exposed.
-  const sorted = [...names].sort((a, b) => b.length - a.length);
-  for (const raw of sorted) {
+  const spans: [number, number][] = [];
+  for (const raw of names) {
     const name = raw.trim();
     if (name.length < 1) continue;
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const re = new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, "gi");
-    out = out.replace(re, "[someone]");
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      spans.push([m.index, m.index + m[0].length]);
+      if (m.index === re.lastIndex) re.lastIndex++; // guard against zero-width loops
+    }
   }
+  if (spans.length === 0) return text;
+
+  spans.sort((a, b) => a[0] - b[0]);
+  const merged: [number, number][] = [spans[0]];
+  for (const [s, e] of spans.slice(1)) {
+    const last = merged[merged.length - 1];
+    if (s <= last[1]) last[1] = Math.max(last[1], e);
+    else merged.push([s, e]);
+  }
+
+  let out = "";
+  let pos = 0;
+  for (const [s, e] of merged) {
+    out += text.slice(pos, s) + "[someone]";
+    pos = e;
+  }
+  out += text.slice(pos);
   return out;
 }
 
