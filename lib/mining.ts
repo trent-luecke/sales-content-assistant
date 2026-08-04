@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ragReadClient } from "@/lib/supabase";
 import { containsAny } from "@/lib/guardrail";
 import type { Idea, IdeaSource } from "@/lib/ideas";
+import type { DemoMoment } from "@/lib/generation";
 
 const MODEL = anthropic("claude-sonnet-5");
 
@@ -141,4 +142,50 @@ function namesFromTitle(title: string): string[] {
   // Titles look like "Gretchen Collins and Chris Reynolds" / "Bre / Trent".
   return title.split(/\s+(?:and|&|\/|,)\s+|\s*[/|]\s*/i)
     .map((s) => s.trim()).filter((s) => s.length > 2);
+}
+
+// Read one demo's moment from the RAG (read-only) for drafting: the rep's own
+// turns (for grounding) plus the distinct non-empty speaker labels (for the
+// forbidden-name list). Mirrors readRepDemos' two-query shape. null if missing.
+export async function readDemoMoment(meetingId: string): Promise<DemoMoment | null> {
+  const rag = ragReadClient();
+  const { data: meeting, error } = await rag
+    .from("meetings")
+    .select("id,title,rep_name")
+    .eq("id", meetingId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!meeting) return null;
+  const m = meeting as { title?: string; rep_name?: string };
+
+  const { data: chunks, error: cErr } = await rag
+    .from("chunks")
+    .select("speaker,text,chunk_index")
+    .eq("meeting_id", meetingId)
+    .order("chunk_index", { ascending: true });
+  if (cErr) throw cErr;
+  const rows = (chunks ?? []) as { speaker?: string; text?: string }[];
+
+  const repFirstName = (m.rep_name ?? "").split(/\s+/)[0] ?? "";
+  const repFirst = repFirstName.toLowerCase();
+
+  const repTurns: string[] = [];
+  const speakerSet = new Set<string>();
+  for (const c of rows) {
+    const speaker = typeof c.speaker === "string" ? c.speaker : "";
+    const text = typeof c.text === "string" ? c.text : "";
+    const isRep = speaker.toLowerCase().includes(repFirst) && repFirst.length > 0;
+    if (isRep) {
+      if (text) repTurns.push(text);
+    } else if (speaker) {
+      speakerSet.add(speaker);
+    }
+  }
+
+  return {
+    title: m.title ?? "",
+    repTurns: repTurns.slice(0, 400),
+    speakers: [...speakerSet],
+    repFirstName,
+  };
 }
