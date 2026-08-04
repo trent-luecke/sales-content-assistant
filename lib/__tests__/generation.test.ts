@@ -1,12 +1,17 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   forbiddenNames,
   redact,
   buildDraftPrompt,
+  generateDraft,
   type DemoMoment,
 } from "@/lib/generation";
+import { generateText } from "ai";
 import type { Idea } from "@/lib/ideas";
 import type { Profile } from "@/lib/profiles";
+
+// Mock the AI SDK so no network/secret is needed; each test scripts the outputs.
+vi.mock("ai", () => ({ generateText: vi.fn() }));
 
 const moment = (over: Partial<DemoMoment> = {}): DemoMoment => ({
   title: "Gretchen Collins and Chris Reynolds",
@@ -121,5 +126,44 @@ describe("buildDraftPrompt", () => {
     // still voice-conditioned and rule-bound
     expect(p).toContain("Direct");
     expect(p.toLowerCase()).toContain("never name");
+  });
+});
+
+describe("generateDraft", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns the draft unchanged when the first pass is clean", async () => {
+    vi.mocked(generateText).mockResolvedValueOnce({ text: "a strength coach I met loved it" } as any);
+    const res = await generateDraft(idea(), profile(), moment());
+    expect(res).toEqual({ body: "a strength coach I met loved it", wasRedacted: false });
+    expect(generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it("regenerates once when a name leaks, and returns the clean retry", async () => {
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ text: "Chris and I nailed the demo" } as any) // leaks "Chris"
+      .mockResolvedValueOnce({ text: "a coach and I nailed the demo" } as any); // clean
+    const res = await generateDraft(idea(), profile(), moment());
+    expect(res.wasRedacted).toBe(false);
+    expect(res.body).toBe("a coach and I nailed the demo");
+    expect(generateText).toHaveBeenCalledTimes(2);
+  });
+
+  it("redacts as a fail-safe when the retry still leaks", async () => {
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ text: "Chris crushed it" } as any)
+      .mockResolvedValueOnce({ text: "Chris still crushed it" } as any); // still leaks
+    const res = await generateDraft(idea(), profile(), moment());
+    expect(res.wasRedacted).toBe(true);
+    expect(res.body).toBe("[someone] still crushed it");
+    expect(res.body).not.toMatch(/Chris/);
+    expect(generateText).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not check names for organic ideas (empty forbidden list)", async () => {
+    vi.mocked(generateText).mockResolvedValueOnce({ text: "Big Company energy today" } as any);
+    const res = await generateDraft(idea({ source: "organic", source_ref: {} }), profile(), null);
+    expect(res).toEqual({ body: "Big Company energy today", wasRedacted: false });
+    expect(generateText).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,5 +1,8 @@
 import type { Idea } from "@/lib/ideas";
 import type { Profile } from "@/lib/profiles";
+import { generateText } from "ai";
+import { anthropic } from "@ai-sdk/anthropic";
+import { containsAny } from "@/lib/guardrail";
 
 export interface DemoMoment {
   title: string;
@@ -125,4 +128,39 @@ export function buildDraftPrompt(
     );
   }
   return parts.join("\n\n");
+}
+
+const MODEL = anthropic("claude-sonnet-5");
+
+// Generate a first-draft post in the rep's voice with the anonymization guardrail
+// enforced: model call -> second-pass name check -> regenerate once if a name
+// leaked -> redact as a last resort. For organic ideas (moment null) the forbidden
+// list is empty and the checks are no-ops (inputs are already anonymized).
+export async function generateDraft(
+  idea: Idea,
+  profile: Profile,
+  moment: DemoMoment | null,
+): Promise<{ body: string; wasRedacted: boolean }> {
+  const forbidden = moment ? forbiddenNames(moment) : [];
+  const basePrompt = buildDraftPrompt(idea, profile, moment);
+
+  let { text } = await generateText({ model: MODEL, prompt: basePrompt });
+  let leaked = containsAny(text, forbidden);
+
+  if (leaked) {
+    const retryPrompt =
+      basePrompt +
+      `\n\nA prior draft included the name "${leaked}". Do NOT mention "${leaked}" or any ` +
+      `other real person, company, or client. Rewrite the post fully anonymized.`;
+    ({ text } = await generateText({ model: MODEL, prompt: retryPrompt }));
+    leaked = containsAny(text, forbidden);
+  }
+
+  let wasRedacted = false;
+  if (leaked) {
+    text = redact(text, forbidden);
+    wasRedacted = true;
+  }
+
+  return { body: text, wasRedacted };
 }
