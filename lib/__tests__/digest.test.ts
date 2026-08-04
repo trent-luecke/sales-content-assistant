@@ -1,6 +1,25 @@
-import { describe, it, expect } from "vitest";
-import { buildDigestBlocks, DRAFT_THIS_ACTION } from "@/lib/digest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { buildDigestBlocks, DRAFT_THIS_ACTION, assembleAndDeliver } from "@/lib/digest";
 import type { Idea } from "@/lib/ideas";
+import type { Profile } from "@/lib/profiles";
+
+vi.mock("@/lib/ideas", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/ideas")>("@/lib/ideas");
+  return { ...actual, selectTopCandidates: vi.fn() };
+});
+vi.mock("@/lib/slack/client", () => ({
+  slack: {
+    conversations: { open: vi.fn() },
+    chat: { postMessage: vi.fn() },
+  },
+}));
+vi.mock("@/lib/supabase", () => ({
+  scaClient: vi.fn(),
+}));
+
+import { selectTopCandidates } from "@/lib/ideas";
+import { slack } from "@/lib/slack/client";
+import { scaClient } from "@/lib/supabase";
 
 const mk = (id: string, hook: string): Idea => ({
   id,
@@ -63,5 +82,89 @@ describe("buildDigestBlocks", () => {
   it("throws when an idea is missing its id", () => {
     const noId = { ...mk("x", "hook"), id: undefined } as Idea;
     expect(() => buildDigestBlocks([noId])).toThrow(/missing an id/);
+  });
+});
+
+const profile = {
+  id: "rep-1",
+  avoma_rep_name: "Test Rep",
+  slack_user_id: "U123",
+  magic_token: "tok",
+  display_name: null,
+  voice_traits: [],
+  background: null,
+  angle: null,
+  channels: [],
+  admired_post: null,
+  status: "active",
+} as Profile;
+
+const MOCK_TS = "1700000000.000100";
+
+describe("assembleAndDeliver", () => {
+  let insertMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    insertMock = vi.fn().mockResolvedValue({ error: null });
+    vi.mocked(scaClient).mockReturnValue({
+      from: vi.fn().mockReturnValue({ insert: insertMock }),
+    } as unknown as ReturnType<typeof scaClient>);
+
+    vi.mocked(slack.conversations.open).mockResolvedValue({
+      ok: true,
+      channel: { id: "D123" },
+    } as never);
+    vi.mocked(slack.chat.postMessage).mockResolvedValue({
+      ok: true,
+      ts: MOCK_TS,
+    } as never);
+  });
+
+  it("short-circuits on an empty candidate pool: nothing sent, nothing recorded", async () => {
+    vi.mocked(selectTopCandidates).mockResolvedValue([]);
+
+    const result = await assembleAndDeliver(profile);
+
+    expect(result).toEqual({ ideaCount: 0, messageTs: null, recorded: false });
+    expect(slack.chat.postMessage).not.toHaveBeenCalled();
+    expect(insertMock).not.toHaveBeenCalled();
+  });
+
+  it("delivers the digest and records it on the happy path", async () => {
+    const ideas: Idea[] = [
+      mk("idea-1", "Go quiet in the demo"),
+      mk("idea-2", "Ask about budget owner"),
+    ];
+    vi.mocked(selectTopCandidates).mockResolvedValue(ideas);
+
+    const result = await assembleAndDeliver(profile);
+
+    expect(slack.chat.postMessage).toHaveBeenCalledTimes(1);
+    expect(insertMock).toHaveBeenCalledTimes(1);
+
+    const insertArg = insertMock.mock.calls[0][0];
+    expect(Object.keys(insertArg).sort()).toEqual(["idea_ids", "message_ts", "rep_id"]);
+    expect(insertArg.rep_id).toBe(profile.id);
+    expect(insertArg.idea_ids).toEqual(["idea-1", "idea-2"]);
+    expect(insertArg.message_ts).toBe(MOCK_TS);
+
+    expect(result).toEqual({ ideaCount: 2, messageTs: MOCK_TS, recorded: true });
+  });
+
+  it("does not throw when the sca_digests insert fails after the DM was delivered", async () => {
+    const ideas: Idea[] = [mk("idea-1", "Go quiet in the demo")];
+    vi.mocked(selectTopCandidates).mockResolvedValue(ideas);
+    insertMock.mockResolvedValue({ error: { message: "boom" } });
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await assembleAndDeliver(profile);
+
+    expect(slack.chat.postMessage).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ ideaCount: 1, messageTs: MOCK_TS, recorded: false });
+    expect(consoleErrorSpy).toHaveBeenCalled();
+
+    consoleErrorSpy.mockRestore();
   });
 });

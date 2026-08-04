@@ -51,11 +51,17 @@ export function buildDigestBlocks(ideas: Idea[]): KnownBlock[] {
 // Select the rep's top candidate ideas, DM them the digest with "Draft this"
 // buttons, and record what was sent. Sends whatever is available (1-3); if the
 // pool is empty it sends nothing and records nothing, returning ideaCount: 0.
+//
+// The DM send is irreversible; the sca_digests insert that logs it is not
+// allowed to turn that into a failure. Once the DM is posted, this function
+// always returns normally (never throws) — if the insert fails, it logs
+// loudly via console.error and returns recorded: false so the caller can
+// still respond 200 without triggering a retry that would double-send the DM.
 export async function assembleAndDeliver(
   profile: Profile,
-): Promise<{ ideaCount: number; messageTs: string | null }> {
+): Promise<{ ideaCount: number; messageTs: string | null; recorded: boolean }> {
   const ideas = await selectTopCandidates(profile.id, 3);
-  if (ideas.length === 0) return { ideaCount: 0, messageTs: null };
+  if (ideas.length === 0) return { ideaCount: 0, messageTs: null, recorded: false };
 
   const blocks = buildDigestBlocks(ideas);
   const fallback = `You have ${ideas.length} content idea${ideas.length === 1 ? "" : "s"} ready.`;
@@ -69,12 +75,23 @@ export async function assembleAndDeliver(
   const messageTs = posted.ts ?? null;
 
   // Record the delivery. idea ids are non-null here (rows came from the DB).
-  const { error } = await scaClient().from("sca_digests").insert({
-    rep_id: profile.id,
-    idea_ids: ideas.map((i) => i.id),
-    message_ts: messageTs,
-  });
-  if (error) throw error;
+  // The DM already went out — a logging failure here must not surface as an
+  // error to the caller (that would trigger a retry and a second DM).
+  let recorded = false;
+  try {
+    const { error } = await scaClient().from("sca_digests").insert({
+      rep_id: profile.id,
+      idea_ids: ideas.map((i) => i.id),
+      message_ts: messageTs,
+    });
+    if (error) {
+      console.error("sca_digests insert failed after DM delivered", { repId: profile.id, messageTs, error });
+    } else {
+      recorded = true;
+    }
+  } catch (error) {
+    console.error("sca_digests insert failed after DM delivered", { repId: profile.id, messageTs, error });
+  }
 
-  return { ideaCount: ideas.length, messageTs };
+  return { ideaCount: ideas.length, messageTs, recorded };
 }

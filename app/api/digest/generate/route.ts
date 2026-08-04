@@ -30,6 +30,6 @@ export async function POST(req: Request) {
     return Response.json({ error: "profile not active" }, { status: 409 });
   }
 
-  const { ideaCount, messageTs } = await assembleAndDeliver(profile);
-  return Response.json({ repId: profile.id, ideaCount, messageTs });
+  const { ideaCount, messageTs, recorded } = await assembleAndDeliver(profile);
+  return Response.json({ repId: profile.id, ideaCount, messageTs, recorded });
 }
