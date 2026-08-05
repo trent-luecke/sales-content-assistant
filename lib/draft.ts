@@ -8,8 +8,10 @@ import { scaClient } from "@/lib/supabase";
 
 // Immediate acknowledgement so the multi-second generation doesn't read as a
 // dead click. Posted right after the claim, then updated in place to the opener.
-const DRAFTING = "✍️ Drafting this in your voice… your canvas will appear here in a few seconds.";
-const OPENER = "First cut's in the canvas — tell me what to change and I'll rework it.";
+const DRAFTING =
+  "✍️ Drafting this in your voice… your draft will appear in a canvas at the top of this chat window in a few seconds.";
+const OPENER =
+  "First cut's in the canvas — reply to this message in a thread, then tell me what to change and I'll rework it.";
 const REDACTED_NOTE =
   "\n\n⚠️ Heads up — I had to redact a name to keep this anonymous, so one phrase might " +
   "read a little awkwardly. Worth a quick look before you post.";
