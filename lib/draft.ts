@@ -6,7 +6,10 @@ import { createCanvasInDM } from "@/lib/slack/canvas";
 import { slack } from "@/lib/slack/client";
 import { scaClient } from "@/lib/supabase";
 
-const OPENER = "First cut's in the canvas above — tell me what to change and I'll rework it.";
+// Immediate acknowledgement so the multi-second generation doesn't read as a
+// dead click. Posted right after the claim, then updated in place to the opener.
+const DRAFTING = "✍️ Drafting this in your voice… your canvas will appear here in a few seconds.";
+const OPENER = "First cut's in the canvas — tell me what to change and I'll rework it.";
 const REDACTED_NOTE =
   "\n\n⚠️ Heads up — I had to redact a name to keep this anonymous, so one phrase might " +
   "read a little awkwardly. Worth a quick look before you post.";
@@ -23,6 +26,17 @@ async function safePost(channel: string, threadTs: string | undefined, text: str
     await slack.chat.postMessage({ channel, thread_ts: threadTs, text });
   } catch (e) {
     console.error("safePost failed", { channel, error: e });
+  }
+}
+
+// Update an existing message in place (used to turn the "drafting…" note into
+// the opener / an error), or post fresh if we never got an interim ts. Never throws.
+async function updateOrPost(channel: string, ts: string | undefined, text: string): Promise<void> {
+  try {
+    if (ts) await slack.chat.update({ channel, ts, text });
+    else await slack.chat.postMessage({ channel, text });
+  } catch (e) {
+    console.error("updateOrPost failed", { channel, error: e });
   }
 }
 
@@ -76,6 +90,10 @@ export async function handleDraftThis(payload: unknown): Promise<void> {
     }
 
     const idea = claim.idea;
+    // Immediate feedback before the slow generation. This message becomes the
+    // iteration thread's parent and is updated in place once the canvas is ready.
+    const interim = await slack.chat.postMessage({ channel, text: DRAFTING }).catch(() => null);
+    const interimTs = interim?.ts;
     try {
       const meetingId =
         typeof (idea.source_ref as { meetingId?: unknown })?.meetingId === "string"
@@ -91,12 +109,16 @@ export async function handleDraftThis(payload: unknown): Promise<void> {
       const { body, wasRedacted } = await generateDraft(idea, profile, moment);
       const canvasId = await createCanvasInDM(channel, draftTitle(idea.hook), body);
 
-      const posted = await slack.chat.postMessage({
-        channel,
-        text: wasRedacted ? OPENER + REDACTED_NOTE : OPENER,
-      });
-      const threadTs = posted.ts;
-      if (!threadTs) throw new Error("thread opener returned no ts");
+      // Turn the "drafting…" note into the opener (or post fresh if it didn't post).
+      const openerText = wasRedacted ? OPENER + REDACTED_NOTE : OPENER;
+      let threadTs = interimTs;
+      if (interimTs) {
+        await slack.chat.update({ channel, ts: interimTs, text: openerText });
+      } else {
+        const op = await slack.chat.postMessage({ channel, text: openerText });
+        threadTs = op.ts;
+      }
+      if (!threadTs) throw new Error("no thread ts for draft session");
 
       const { error } = await scaClient().from("sca_thread_map").insert({
         rep_id: profile.id,
@@ -107,9 +129,10 @@ export async function handleDraftThis(payload: unknown): Promise<void> {
       });
       if (error) throw error;
     } catch (e) {
-      // Post-claim failure: release the claim so the rep can retry; signal them.
+      // Post-claim failure: release the claim so the rep can retry; turn the
+      // "drafting…" note into the error (or post fresh if it never posted).
       await setIdeaStatus(ideaId, "candidate").catch(() => {});
-      await safePost(channel, undefined, "Something went wrong drafting that — try again in a sec.");
+      await updateOrPost(channel, interimTs, "Something went wrong drafting that — try again in a sec.");
       console.error("handleDraftThis failed (post-claim)", { repId: profile.id, ideaId, error: e });
     }
   } catch (e) {
