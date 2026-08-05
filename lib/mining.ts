@@ -99,13 +99,44 @@ export async function deriveVoiceProfile(demos: DemoTranscript[]): Promise<{
   return object;
 }
 
+// One raw idea as the model returns it. `demoNumber` is the 1-based index of the
+// demo (from the numbered "## Demo N" corpus headers) the moment came from — the
+// model never sees or supplies the real meeting UUID.
+export interface MinedIdea {
+  source: IdeaSource;
+  hook: string;
+  rationale: string;
+  demoNumber?: number;
+}
+
+// Pure: map the model's `demoNumber` back to the real meetingId from `demos`.
+// The model is never trusted to produce an id — a demo idea only gets a
+// meetingId when its demoNumber is a valid 1-based index into `demos`; anything
+// else (organic, missing, or out-of-range) yields an empty sourceRef.
+export function rawIdeasFromMined(minedIdeas: MinedIdea[], demos: DemoTranscript[]): RawIdea[] {
+  return minedIdeas.map((i) => {
+    const meetingId =
+      i.source === "demo" && typeof i.demoNumber === "number"
+        ? demos[i.demoNumber - 1]?.meetingId
+        : undefined;
+    return {
+      source: i.source,
+      hook: i.hook,
+      rationale: i.rationale,
+      sourceRef: meetingId ? { meetingId } : {},
+    };
+  });
+}
+
 export async function mineIdeas(
   repId: string, demos: DemoTranscript[], profile: { angle: string },
 ): Promise<Idea[]> {
   // Collect real names to forbid from rep-facing text (anonymization guardrail).
   const forbidden = demos.flatMap((d) => namesFromTitle(d.title));
+  // Number each demo so the model can reference one by index; the real meetingId
+  // is mapped back in code (the model never sees a UUID and must not invent one).
   const corpus = demos
-    .map((d) => `# ${d.title} (${d.date})\n${d.repTurns.join("\n")}`)
+    .map((d, idx) => `## Demo ${idx + 1}: ${d.title} (${d.date})\n${d.repTurns.join("\n")}`)
     .join("\n\n").slice(0, 40_000);
 
   const { object } = await generateObject({
@@ -115,7 +146,7 @@ export async function mineIdeas(
         source: z.enum(["demo", "organic"]),
         hook: z.string(),
         rationale: z.string(),
-        meetingId: z.string().optional(),
+        demoNumber: z.number().int().positive().optional(),
       })),
     }),
     prompt:
@@ -123,15 +154,11 @@ export async function mineIdeas(
       "moment in the transcripts, and 'organic' ideas from their angle: " + profile.angle + ". " +
       "HARD RULE: never name a customer, prospect, company, or deal — render every story as an " +
       "anonymized pattern (e.g. 'a strength coach I spoke with'). Each idea: a one-line hook and a " +
-      "one-line rationale (why it'd land). For demo ideas include the meetingId.\n\n" + corpus,
+      "one-line rationale (why it'd land). For a 'demo' idea, set demoNumber to the number N from " +
+      "the '## Demo N' header of the demo the moment came from.\n\n" + corpus,
   });
 
-  const raw: RawIdea[] = object.ideas.map((i) => ({
-    source: i.source,
-    hook: i.hook,
-    rationale: i.rationale,
-    sourceRef: i.meetingId ? { meetingId: i.meetingId } : {},
-  }));
+  const raw = rawIdeasFromMined(object.ideas, demos);
 
   // Guardrail: drop any idea whose rep-facing text leaked a forbidden name.
   const safe = raw.filter((r) => !containsAny(`${r.hook} ${r.rationale}`, forbidden));
@@ -156,7 +183,13 @@ function namesFromTitle(title: string): string[] {
 // Read one demo's moment from the RAG (read-only) for drafting: the rep's own
 // turns (for grounding) plus the distinct non-empty speaker labels (for the
 // forbidden-name list). Mirrors readRepDemos' two-query shape. null if missing.
+// RAG meeting ids are UUIDs; guard against a malformed ref (e.g. a legacy idea
+// whose source_ref.meetingId held a non-UUID) so a bad ref degrades to "no
+// moment" instead of a Postgres uuid-syntax error that would fail the draft.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function readDemoMoment(meetingId: string): Promise<DemoMoment | null> {
+  if (!UUID_RE.test(meetingId)) return null;
   const rag = ragReadClient();
   const { data: meeting, error } = await rag
     .from("meetings")

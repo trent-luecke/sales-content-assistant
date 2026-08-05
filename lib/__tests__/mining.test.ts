@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { toIdeas, filterUnminedDemos, isRepSpeaker, type DemoTranscript } from "@/lib/mining";
+import {
+  toIdeas,
+  filterUnminedDemos,
+  isRepSpeaker,
+  rawIdeasFromMined,
+  type DemoTranscript,
+} from "@/lib/mining";
 
 describe("filterUnminedDemos", () => {
   const demo = (id: string): DemoTranscript => ({ meetingId: id, title: "", date: "", repTurns: [] });
@@ -25,6 +31,40 @@ describe("toIdeas", () => {
   });
   it("drops items with an empty hook", () => {
     expect(toIdeas("r", [{ source: "demo", hook: "  ", rationale: "x", sourceRef: {} }])).toEqual([]);
+  });
+});
+
+describe("rawIdeasFromMined", () => {
+  const demos: DemoTranscript[] = [
+    { meetingId: "uuid-A", title: "A", date: "", repTurns: [] },
+    { meetingId: "uuid-B", title: "B", date: "", repTurns: [] },
+  ];
+
+  it("maps a demo idea's demoNumber back to the real meetingId (1-based)", () => {
+    const out = rawIdeasFromMined(
+      [{ source: "demo", hook: "h", rationale: "r", demoNumber: 2 }],
+      demos,
+    );
+    expect(out).toEqual([{ source: "demo", hook: "h", rationale: "r", sourceRef: { meetingId: "uuid-B" } }]);
+  });
+
+  it("gives organic ideas an empty sourceRef regardless of demoNumber", () => {
+    const out = rawIdeasFromMined(
+      [{ source: "organic", hook: "h", rationale: "r", demoNumber: 1 }],
+      demos,
+    );
+    expect(out[0].sourceRef).toEqual({});
+  });
+
+  it("uses an empty sourceRef when demoNumber is missing or out of range (never trusts a fabricated id)", () => {
+    const out = rawIdeasFromMined(
+      [
+        { source: "demo", hook: "no-num", rationale: "r" },
+        { source: "demo", hook: "oob", rationale: "r", demoNumber: 99 },
+      ],
+      demos,
+    );
+    expect(out.map((r) => r.sourceRef)).toEqual([{}, {}]);
   });
 });
 

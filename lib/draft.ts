@@ -81,7 +81,12 @@ export async function handleDraftThis(payload: unknown): Promise<void> {
         typeof (idea.source_ref as { meetingId?: unknown })?.meetingId === "string"
           ? (idea.source_ref as { meetingId: string }).meetingId
           : null;
-      const moment = idea.source === "demo" && meetingId ? await readDemoMoment(meetingId) : null;
+      // A bad/missing source moment must never fail the draft — fall back to the
+      // profile-only (organic) path if the RAG read errors or the ref is invalid.
+      const moment =
+        idea.source === "demo" && meetingId
+          ? await readDemoMoment(meetingId).catch(() => null)
+          : null;
 
       const { body, wasRedacted } = await generateDraft(idea, profile, moment);
       const canvasId = await createCanvasInDM(channel, draftTitle(idea.hook), body);
