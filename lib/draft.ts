@@ -1,20 +1,39 @@
 import { getProfileBySlackUser } from "@/lib/profiles";
+import type { Profile } from "@/lib/profiles";
 import { claimIdea, setIdeaStatus } from "@/lib/ideas";
+import type { Idea } from "@/lib/ideas";
 import { readDemoMoment } from "@/lib/mining";
 import { generateDraft } from "@/lib/generation";
+import type { DemoMoment, Platform } from "@/lib/generation";
+import { parsePlatformValue, platformsForSelection, buildPlatformChoiceBlocks } from "@/lib/digest";
 import { createCanvasInDM } from "@/lib/slack/canvas";
 import { slack } from "@/lib/slack/client";
 import { scaClient } from "@/lib/supabase";
 
-// Immediate acknowledgement so the multi-second generation doesn't read as a
-// dead click. Posted right after the claim, then updated in place to the opener.
-const DRAFTING =
-  "✍️ Drafting this in your voice… your draft will appear in a canvas at the top of this chat window in a few seconds.";
+// The opener that replaces the interim "drafting…" message once a canvas is
+// ready. Becomes the parent of the rep's iteration thread.
 const OPENER =
   "First cut's in the canvas — reply to this message in a thread, then tell me what to change and I'll rework it.";
 const REDACTED_NOTE =
   "\n\n⚠️ Heads up — I had to redact a name to keep this anonymous, so one phrase might " +
   "read a little awkwardly. Worth a quick look before you post.";
+
+const PLATFORM_LABEL: Record<Platform, string> = {
+  linkedin: "LinkedIn",
+  instagram: "Instagram",
+};
+
+// The rep's configured platforms, normalized to our lowercase Platform values.
+// Empty/unknown -> default to LinkedIn so a rep is never stuck.
+function repPlatforms(profile: { channels: unknown[] }): Platform[] {
+  const out: Platform[] = [];
+  for (const c of profile.channels ?? []) {
+    const l = String(c).toLowerCase();
+    if (l === "linkedin" && !out.includes("linkedin")) out.push("linkedin");
+    if (l === "instagram" && !out.includes("instagram")) out.push("instagram");
+  }
+  return out.length > 0 ? out : ["linkedin"];
+}
 
 // A short Canvas title from the idea's hook.
 function draftTitle(hook: string): string {
@@ -55,6 +74,105 @@ async function threadTsForIdea(repId: string, ideaId: string): Promise<string | 
   return (data?.thread_ts as string | undefined) ?? undefined;
 }
 
+// Claim the idea once, then draft one canvas + thread + sca_thread_map row per
+// platform. Runs post-ack; never throws. Total failure releases the claim;
+// partial success (Both) keeps it and reports the gap.
+async function claimAndDraft(
+  ideaId: string,
+  profile: Profile,
+  channel: string,
+  platforms: Platform[],
+): Promise<void> {
+  const claim = await claimIdea(ideaId, profile.id);
+  if (claim.outcome === "already_used") {
+    const existingTs = await threadTsForIdea(profile.id, ideaId);
+    await safePost(channel, existingTs, "You're already drafting this one 👆");
+    return;
+  }
+  if (claim.outcome === "not_found") {
+    await safePost(channel, undefined, "Hmm, I couldn't find that idea — grab another from your latest digest.");
+    return;
+  }
+  const idea = claim.idea;
+
+  const label = platforms.map((p) => PLATFORM_LABEL[p]).join(" & ");
+  const interim = await slack.chat
+    .postMessage({ channel, text: `✍️ Drafting your ${label} draft${platforms.length > 1 ? "s" : ""}…` })
+    .catch(() => null);
+  const interimTs = interim?.ts;
+
+  // One shared moment read for all platforms.
+  const meetingId =
+    typeof (idea.source_ref as { meetingId?: unknown })?.meetingId === "string"
+      ? (idea.source_ref as { meetingId: string }).meetingId
+      : null;
+  const moment =
+    idea.source === "demo" && meetingId
+      ? await readDemoMoment(meetingId).catch(() => null)
+      : null;
+
+  // Draft each platform independently; the first reuses the interim message as
+  // its opener/thread parent, the rest post fresh. Returns ok/fail per platform.
+  const results = await Promise.all(
+    platforms.map((platform, i) =>
+      draftOnePlatform(idea, profile, channel, moment, platform, i === 0 ? interimTs : undefined),
+    ),
+  );
+
+  const anyOk = results.some((r) => r.ok);
+  const anyFail = results.some((r) => !r.ok);
+
+  if (!anyOk) {
+    // Total failure: release the claim; turn the interim into an error.
+    await setIdeaStatus(ideaId, "candidate").catch(() => {});
+    await updateOrPost(channel, interimTs, "Something went wrong drafting that — try again in a sec.");
+    return;
+  }
+  if (anyFail) {
+    // Partial (Both): keep the claim; name the platform that failed.
+    const failed = results.filter((r) => !r.ok).map((r) => PLATFORM_LABEL[r.platform]).join(" & ");
+    await safePost(channel, undefined, `I hit a snag on the ${failed} draft — click Draft this again to retry it.`);
+  }
+}
+
+async function draftOnePlatform(
+  idea: Idea,
+  profile: Profile,
+  channel: string,
+  moment: DemoMoment | null,
+  platform: Platform,
+  reuseTs: string | undefined,
+): Promise<{ ok: boolean; platform: Platform }> {
+  try {
+    const { body, wasRedacted } = await generateDraft(idea, profile, moment, platform);
+    const canvasId = await createCanvasInDM(channel, draftTitle(idea.hook), body);
+
+    const openerText = wasRedacted ? OPENER + REDACTED_NOTE : OPENER;
+    let threadTs = reuseTs;
+    if (reuseTs) {
+      await slack.chat.update({ channel, ts: reuseTs, text: openerText });
+    } else {
+      const op = await slack.chat.postMessage({ channel, text: openerText });
+      threadTs = op.ts;
+    }
+    if (!threadTs) throw new Error("no thread ts for draft session");
+
+    const { error } = await scaClient().from("sca_thread_map").insert({
+      rep_id: profile.id,
+      slack_channel: channel,
+      thread_ts: threadTs,
+      canvas_id: canvasId,
+      idea_id: idea.id,
+      platform,
+    });
+    if (error) throw error;
+    return { ok: true, platform };
+  } catch (e) {
+    console.error("draftOnePlatform failed", { repId: profile.id, ideaId: idea.id, platform, error: e });
+    return { ok: false, platform };
+  }
+}
+
 // Handle a "Draft this" click end to end. Runs post-ack (inside waitUntil), so it
 // owns all failure handling — nothing here can surface an HTTP error to Slack.
 export async function handleDraftThis(payload: unknown): Promise<void> {
@@ -70,77 +188,46 @@ export async function handleDraftThis(payload: unknown): Promise<void> {
     return;
   }
 
-  // Runs post-ack inside waitUntil — this function must never throw. An outer
-  // try guards the pre-claim reads (profile resolve, claim, thread lookup); the
-  // inner try guards the claimed path and additionally releases the claim.
   try {
     const profile = await getProfileBySlackUser(slackUserId);
     if (!profile) {
       await safePost(channel, undefined, "I couldn't find your profile yet — finish onboarding and try again.");
       return;
     }
-
-    const claim = await claimIdea(ideaId, profile.id);
-    if (claim.outcome === "already_used") {
-      const existingTs = await threadTsForIdea(profile.id, ideaId);
-      await safePost(channel, existingTs, "You're already drafting this one 👆");
+    const platforms = repPlatforms(profile);
+    if (platforms.length > 1) {
+      // Both channels: ask before committing (no claim yet).
+      await slack.chat
+        .postMessage({ channel, blocks: buildPlatformChoiceBlocks(ideaId), text: "Which platform(s) will this be posted on?" })
+        .catch((e) => console.error("platform choice post failed", { ideaId, error: e }));
       return;
     }
-    if (claim.outcome === "not_found") {
-      await safePost(channel, undefined, "Hmm, I couldn't find that idea — grab another from your latest digest.");
-      return;
-    }
-
-    const idea = claim.idea;
-    // Immediate feedback before the slow generation. This message becomes the
-    // iteration thread's parent and is updated in place once the canvas is ready.
-    const interim = await slack.chat.postMessage({ channel, text: DRAFTING }).catch(() => null);
-    const interimTs = interim?.ts;
-    try {
-      const meetingId =
-        typeof (idea.source_ref as { meetingId?: unknown })?.meetingId === "string"
-          ? (idea.source_ref as { meetingId: string }).meetingId
-          : null;
-      // A bad/missing source moment must never fail the draft — fall back to the
-      // profile-only (organic) path if the RAG read errors or the ref is invalid.
-      const moment =
-        idea.source === "demo" && meetingId
-          ? await readDemoMoment(meetingId).catch(() => null)
-          : null;
-
-      const { body, wasRedacted } = await generateDraft(idea, profile, moment);
-      const canvasId = await createCanvasInDM(channel, draftTitle(idea.hook), body);
-
-      // Turn the "drafting…" note into the opener (or post fresh if it didn't post).
-      const openerText = wasRedacted ? OPENER + REDACTED_NOTE : OPENER;
-      let threadTs = interimTs;
-      if (interimTs) {
-        await slack.chat.update({ channel, ts: interimTs, text: openerText });
-      } else {
-        const op = await slack.chat.postMessage({ channel, text: openerText });
-        threadTs = op.ts;
-      }
-      if (!threadTs) throw new Error("no thread ts for draft session");
-
-      const { error } = await scaClient().from("sca_thread_map").insert({
-        rep_id: profile.id,
-        slack_channel: channel,
-        thread_ts: threadTs,
-        canvas_id: canvasId,
-        idea_id: ideaId,
-      });
-      if (error) throw error;
-    } catch (e) {
-      // Post-claim failure: release the claim so the rep can retry; turn the
-      // "drafting…" note into the error (or post fresh if it never posted).
-      await setIdeaStatus(ideaId, "candidate").catch(() => {});
-      await updateOrPost(channel, interimTs, "Something went wrong drafting that — try again in a sec.");
-      console.error("handleDraftThis failed (post-claim)", { repId: profile.id, ideaId, error: e });
-    }
+    await claimAndDraft(ideaId, profile, channel, platforms);
   } catch (e) {
-    // Pre-claim failure (profile resolve / claim / thread lookup threw): nothing
-    // was claimed, so nothing to release — just signal the rep and log.
     await safePost(channel, undefined, "Something went wrong — try again in a sec.");
     console.error("handleDraftThis failed (pre-claim)", { slackUserId, ideaId, error: e });
+  }
+}
+
+export async function handleDraftPlatform(payload: unknown): Promise<void> {
+  const p = payload as { actions?: { value?: unknown }[]; user?: { id?: unknown }; channel?: { id?: unknown } };
+  const rawValue = p?.actions?.[0]?.value;
+  const slackUserId = p?.user?.id;
+  const channel = p?.channel?.id;
+  if (typeof rawValue !== "string" || typeof slackUserId !== "string" || typeof channel !== "string") return;
+
+  const parsed = parsePlatformValue(rawValue);
+  if (!parsed) return;
+
+  try {
+    const profile = await getProfileBySlackUser(slackUserId);
+    if (!profile) {
+      await safePost(channel, undefined, "I couldn't find your profile yet — finish onboarding and try again.");
+      return;
+    }
+    await claimAndDraft(parsed.ideaId, profile, channel, platformsForSelection(parsed.selection));
+  } catch (e) {
+    await safePost(channel, undefined, "Something went wrong — try again in a sec.");
+    console.error("handleDraftPlatform failed (pre-claim)", { slackUserId, ideaId: parsed.ideaId, error: e });
   }
 }
