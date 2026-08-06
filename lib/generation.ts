@@ -100,6 +100,8 @@ export function redact(text: string, names: string[]): string {
   return out;
 }
 
+export type Platform = "linkedin" | "instagram";
+
 function renderTraits(traits: unknown[]): string {
   const list = (traits as VoiceTraitish[]) ?? [];
   return list
@@ -116,17 +118,33 @@ export function buildDraftPrompt(
   idea: Idea,
   profile: Profile,
   moment: DemoMoment | null,
+  platform: Platform,
 ): string {
   const parts: string[] = [];
   parts.push(
-    "Write a single social post (LinkedIn/Instagram) in this sales rep's own voice. " +
-      "First person, natural, no hashtags unless the rep's examples use them. Return ONLY the post text.",
+    "Write a single social post in this sales rep's own voice. First person, natural. " +
+      "No hashtags. No emoji. The rep will add those by hand if they want. Return ONLY the post text.",
   );
   parts.push(
     "HARD RULE: never name a customer, prospect, company, club, or deal. Render every " +
       "story as an anonymized pattern (e.g. 'a strength coach I spoke with'). If you are " +
       "unsure whether something identifies a real party, generalize it.",
   );
+  if (platform === "linkedin") {
+    parts.push(
+      "## Platform: LinkedIn\nAim for ~120-250 words. Open with a strong first line, then an " +
+        "anonymized insight, then a takeaway.",
+    );
+  } else {
+    parts.push(
+      "## Platform: Instagram\nKeep it tight (~40-110 words). Put the payload in the FIRST line " +
+        "(Instagram truncates ~125 characters). Hook, one or two beats, a light close. Leave " +
+        "whitespace between short lines.\n\nAfter the caption, output a line containing exactly " +
+        "===VISUAL=== on its own, then 1-2 concrete, anonymized ideas for a visual asset the rep " +
+        "could take to an image generator. Never name a real person, company, or client in the " +
+        "visual ideas either.",
+    );
+  }
   parts.push(`## The rep's voice\n${renderTraits(profile.voice_traits)}`);
   if (profile.background) parts.push(`## Background\n${profile.background}`);
   if (profile.angle) parts.push(`## Their distinctive angle\n${profile.angle}`);
@@ -153,7 +171,7 @@ export async function generateDraft(
   moment: DemoMoment | null,
 ): Promise<{ body: string; wasRedacted: boolean }> {
   const forbidden = moment ? forbiddenNames(moment) : [];
-  const basePrompt = buildDraftPrompt(idea, profile, moment);
+  const basePrompt = buildDraftPrompt(idea, profile, moment, "linkedin");
 
   let { text } = await generateText({ model: MODEL, prompt: basePrompt });
   let leaked = containsAny(text, forbidden);

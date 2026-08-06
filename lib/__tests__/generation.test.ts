@@ -124,22 +124,38 @@ describe("redact", () => {
 
 describe("buildDraftPrompt", () => {
   it("includes voice traits, the hook, the rationale, and the anonymization rule", () => {
-    const p = buildDraftPrompt(idea(), profile(), moment());
+    const p = buildDraftPrompt(idea(), profile(), moment(), "linkedin");
     expect(p).toContain("Direct");
     expect(p).toContain("The moment a demo lands is when I go quiet");
     expect(p).toContain("outsider who makes it approachable");
     expect(p.toLowerCase()).toContain("never name");
   });
   it("includes the demo moment's rep turns for demo ideas", () => {
-    const p = buildDraftPrompt(idea(), profile(), moment());
+    const p = buildDraftPrompt(idea(), profile(), moment(), "linkedin");
     expect(p).toContain("So here's how I'd run the demo");
   });
   it("omits the moment section for organic ideas (moment null)", () => {
-    const p = buildDraftPrompt(idea({ source: "organic", source_ref: {} }), profile(), null);
+    const p = buildDraftPrompt(idea({ source: "organic", source_ref: {} }), profile(), null, "linkedin");
     expect(p).not.toContain("So here's how I'd run the demo");
     // still voice-conditioned and rule-bound
     expect(p).toContain("Direct");
     expect(p.toLowerCase()).toContain("never name");
+  });
+
+  it("LinkedIn: forbids hashtags and emoji, gives the LinkedIn length/shape, no visual instruction", () => {
+    const p = buildDraftPrompt(idea(), profile(), moment(), "linkedin");
+    expect(p.toLowerCase()).toContain("no hashtags");
+    expect(p.toLowerCase()).toContain("no emoji");
+    expect(p).toMatch(/120|250/); // the LinkedIn word-count guidance
+    expect(p).not.toContain("===VISUAL===");
+  });
+
+  it("Instagram: forbids hashtags and emoji, gives the tight shape and the visual instruction", () => {
+    const p = buildDraftPrompt(idea(), profile(), moment(), "instagram");
+    expect(p.toLowerCase()).toContain("no hashtags");
+    expect(p.toLowerCase()).toContain("no emoji");
+    expect(p).toMatch(/first line/i);
+    expect(p).toContain("===VISUAL===");
   });
 });
 
