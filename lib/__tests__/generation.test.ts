@@ -4,6 +4,8 @@ import {
   redact,
   buildDraftPrompt,
   generateDraft,
+  splitVisual,
+  assembleCanvasBody,
   type DemoMoment,
 } from "@/lib/generation";
 import { generateText } from "ai";
@@ -159,12 +161,48 @@ describe("buildDraftPrompt", () => {
   });
 });
 
+describe("splitVisual", () => {
+  it("splits caption from visual on the sentinel and trims", () => {
+    const out = splitVisual("Caption line here\n===VISUAL===\nA close-up of a barbell");
+    expect(out.caption).toBe("Caption line here");
+    expect(out.visual).toBe("A close-up of a barbell");
+  });
+  it("returns null visual when the sentinel is absent", () => {
+    const out = splitVisual("Just a caption, no sentinel");
+    expect(out.caption).toBe("Just a caption, no sentinel");
+    expect(out.visual).toBeNull();
+  });
+  it("uses only the first sentinel if the model emits more than one", () => {
+    const out = splitVisual("cap\n===VISUAL===\nidea one\n===VISUAL===\nidea two");
+    expect(out.caption).toBe("cap");
+    expect(out.visual).toBe("idea one\n===VISUAL===\nidea two");
+  });
+});
+
+describe("assembleCanvasBody", () => {
+  it("LinkedIn returns the raw text unchanged", () => {
+    expect(assembleCanvasBody("A LinkedIn post", "linkedin")).toBe("A LinkedIn post");
+  });
+  it("Instagram with a visual appends the labeled section", () => {
+    const body = assembleCanvasBody("Caption\n===VISUAL===\nA barbell close-up", "instagram");
+    expect(body).toContain("Caption");
+    expect(body).toContain("Visual idea — not part of your caption");
+    expect(body).toContain("A barbell close-up");
+    expect(body).not.toContain("===VISUAL===");
+  });
+  it("Instagram without a sentinel returns caption only, no visual label", () => {
+    const body = assembleCanvasBody("Just a caption", "instagram");
+    expect(body).toBe("Just a caption");
+    expect(body).not.toContain("Visual idea");
+  });
+});
+
 describe("generateDraft", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("returns the draft unchanged when the first pass is clean", async () => {
     vi.mocked(generateText).mockResolvedValueOnce({ text: "a strength coach I met loved it" } as any);
-    const res = await generateDraft(idea(), profile(), moment());
+    const res = await generateDraft(idea(), profile(), moment(), "linkedin");
     expect(res).toEqual({ body: "a strength coach I met loved it", wasRedacted: false });
     expect(generateText).toHaveBeenCalledTimes(1);
   });
@@ -173,7 +211,7 @@ describe("generateDraft", () => {
     vi.mocked(generateText)
       .mockResolvedValueOnce({ text: "Chris and I nailed the demo" } as any) // leaks "Chris"
       .mockResolvedValueOnce({ text: "a coach and I nailed the demo" } as any); // clean
-    const res = await generateDraft(idea(), profile(), moment());
+    const res = await generateDraft(idea(), profile(), moment(), "linkedin");
     expect(res.wasRedacted).toBe(false);
     expect(res.body).toBe("a coach and I nailed the demo");
     expect(generateText).toHaveBeenCalledTimes(2);
@@ -183,7 +221,7 @@ describe("generateDraft", () => {
     vi.mocked(generateText)
       .mockResolvedValueOnce({ text: "Chris crushed it" } as any)
       .mockResolvedValueOnce({ text: "Chris still crushed it" } as any); // still leaks
-    const res = await generateDraft(idea(), profile(), moment());
+    const res = await generateDraft(idea(), profile(), moment(), "linkedin");
     expect(res.wasRedacted).toBe(true);
     expect(res.body).toBe("[someone] still crushed it");
     expect(res.body).not.toMatch(/Chris/);
@@ -192,8 +230,29 @@ describe("generateDraft", () => {
 
   it("does not check names for organic ideas (empty forbidden list)", async () => {
     vi.mocked(generateText).mockResolvedValueOnce({ text: "Big Company energy today" } as any);
-    const res = await generateDraft(idea({ source: "organic", source_ref: {} }), profile(), null);
+    const res = await generateDraft(idea({ source: "organic", source_ref: {} }), profile(), null, "linkedin");
     expect(res).toEqual({ body: "Big Company energy today", wasRedacted: false });
     expect(generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it("Instagram: anonymizes then assembles the visual section", async () => {
+    vi.mocked(generateText).mockResolvedValueOnce({
+      text: "a coach I met crushed it\n===VISUAL===\nphoto of an empty gym floor",
+    } as any);
+    const res = await generateDraft(idea(), profile(), moment(), "instagram");
+    expect(res.wasRedacted).toBe(false);
+    expect(res.body).toContain("a coach I met crushed it");
+    expect(res.body).toContain("Visual idea — not part of your caption");
+    expect(res.body).toContain("photo of an empty gym floor");
+    expect(res.body).not.toContain("===VISUAL===");
+  });
+
+  it("Instagram: guardrail redacts a leaked name in the VISUAL block too", async () => {
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ text: "a coach crushed it\n===VISUAL===\nphoto of Chris lifting" } as any)
+      .mockResolvedValueOnce({ text: "a coach crushed it\n===VISUAL===\nphoto of Chris lifting" } as any);
+    const res = await generateDraft(idea(), profile(), moment(), "instagram");
+    expect(res.wasRedacted).toBe(true);
+    expect(res.body).not.toMatch(/Chris/);
   });
 });

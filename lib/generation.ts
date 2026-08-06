@@ -159,6 +159,27 @@ export function buildDraftPrompt(
   return parts.join("\n\n");
 }
 
+const VISUAL_SENTINEL = "===VISUAL===";
+
+// Split raw Instagram model output into caption + visual on the FIRST sentinel.
+// No sentinel -> the whole text is the caption and visual is null.
+export function splitVisual(raw: string): { caption: string; visual: string | null } {
+  const i = raw.indexOf(VISUAL_SENTINEL);
+  if (i === -1) return { caption: raw.trim(), visual: null };
+  const caption = raw.slice(0, i).trim();
+  const visual = raw.slice(i + VISUAL_SENTINEL.length).trim();
+  return { caption, visual: visual.length > 0 ? visual : null };
+}
+
+// Turn raw (already-anonymized) model output into canvas-ready markdown.
+// LinkedIn: unchanged. Instagram: caption + a labeled visual section when present.
+export function assembleCanvasBody(raw: string, platform: Platform): string {
+  if (platform === "linkedin") return raw;
+  const { caption, visual } = splitVisual(raw);
+  if (!visual) return caption;
+  return `${caption}\n\n---\n\n**Visual idea — not part of your caption**\n\n${visual}`;
+}
+
 const MODEL = anthropic("claude-sonnet-5");
 
 // Generate a first-draft post in the rep's voice with the anonymization guardrail
@@ -169,9 +190,10 @@ export async function generateDraft(
   idea: Idea,
   profile: Profile,
   moment: DemoMoment | null,
+  platform: Platform,
 ): Promise<{ body: string; wasRedacted: boolean }> {
   const forbidden = moment ? forbiddenNames(moment) : [];
-  const basePrompt = buildDraftPrompt(idea, profile, moment, "linkedin");
+  const basePrompt = buildDraftPrompt(idea, profile, moment, platform);
 
   let { text } = await generateText({ model: MODEL, prompt: basePrompt });
   let leaked = containsAny(text, forbidden);
@@ -191,5 +213,5 @@ export async function generateDraft(
     wasRedacted = true;
   }
 
-  return { body: text, wasRedacted };
+  return { body: assembleCanvasBody(text, platform), wasRedacted };
 }
