@@ -4,10 +4,61 @@ import { slack } from "@/lib/slack/client";
 import { scaClient } from "@/lib/supabase";
 import { selectTopCandidates } from "@/lib/ideas";
 import type { Profile } from "@/lib/profiles";
+import type { Platform } from "@/lib/generation";
 
 // The button contract shared with the interactivity endpoint (Phase 1 step 6):
 // every "Draft this" button carries this action_id and the idea's uuid as value.
 export const DRAFT_THIS_ACTION = "draft_this";
+
+// The platform-choice message posted for both-channel reps after "Draft this":
+// each button carries this action_id and an encoded "<ideaId>|<selection>" value.
+export const DRAFT_PLATFORM_ACTION = "draft_platform";
+export type PlatformSelection = "linkedin" | "instagram" | "both";
+
+export function encodePlatformValue(ideaId: string, selection: PlatformSelection): string {
+  return `${ideaId}|${selection}`;
+}
+
+export function parsePlatformValue(
+  value: string,
+): { ideaId: string; selection: PlatformSelection } | null {
+  const i = value.indexOf("|");
+  if (i <= 0) return null; // no pipe, or empty ideaId
+  const ideaId = value.slice(0, i);
+  const sel = value.slice(i + 1);
+  if (sel !== "linkedin" && sel !== "instagram" && sel !== "both") return null;
+  return { ideaId, selection: sel };
+}
+
+export function platformsForSelection(selection: PlatformSelection): Platform[] {
+  return selection === "both" ? ["linkedin", "instagram"] : [selection];
+}
+
+// Pure: shape the platform-choice message for a single idea — one section
+// asking which platform(s), and three buttons (Instagram / LinkedIn / Both)
+// each carrying the draft_platform action_id and an encoded value.
+export function buildPlatformChoiceBlocks(ideaId: string): KnownBlock[] {
+  const button = (text: string, selection: PlatformSelection) => ({
+    type: "button" as const,
+    text: { type: "plain_text" as const, text },
+    action_id: DRAFT_PLATFORM_ACTION,
+    value: encodePlatformValue(ideaId, selection),
+  });
+  return [
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: "Which platform(s) will this be posted on?" },
+    },
+    {
+      type: "actions",
+      elements: [
+        button("Instagram", "instagram"),
+        button("LinkedIn", "linkedin"),
+        button("Both", "both"),
+      ],
+    },
+  ];
+}
 
 // Pure: shape ideas into a single Block Kit message. Header, then per idea a
 // section (bold hook + rationale) and an actions block with one "Draft this"

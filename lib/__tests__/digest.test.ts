@@ -1,5 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { buildDigestBlocks, DRAFT_THIS_ACTION, assembleAndDeliver } from "@/lib/digest";
+import {
+  buildDigestBlocks,
+  DRAFT_THIS_ACTION,
+  assembleAndDeliver,
+  DRAFT_PLATFORM_ACTION,
+  encodePlatformValue,
+  parsePlatformValue,
+  platformsForSelection,
+  buildPlatformChoiceBlocks,
+} from "@/lib/digest";
 import type { Idea } from "@/lib/ideas";
 import type { Profile } from "@/lib/profiles";
 
@@ -166,5 +175,42 @@ describe("assembleAndDeliver", () => {
     expect(consoleErrorSpy).toHaveBeenCalled();
 
     consoleErrorSpy.mockRestore();
+  });
+});
+
+describe("platform value encoding", () => {
+  it("round-trips ideaId and selection", () => {
+    const v = encodePlatformValue("idea-123", "both");
+    expect(v).toBe("idea-123|both");
+    expect(parsePlatformValue(v)).toEqual({ ideaId: "idea-123", selection: "both" });
+  });
+  it("rejects malformed or unknown-selection values", () => {
+    expect(parsePlatformValue("no-pipe")).toBeNull();
+    expect(parsePlatformValue("idea-1|twitter")).toBeNull();
+    expect(parsePlatformValue("|both")).toBeNull();
+  });
+});
+
+describe("platformsForSelection", () => {
+  it("maps each selection to platform list", () => {
+    expect(platformsForSelection("linkedin")).toEqual(["linkedin"]);
+    expect(platformsForSelection("instagram")).toEqual(["instagram"]);
+    expect(platformsForSelection("both")).toEqual(["linkedin", "instagram"]);
+  });
+});
+
+describe("buildPlatformChoiceBlocks", () => {
+  it("asks the platform question with three correctly-encoded buttons", () => {
+    const blocks = buildPlatformChoiceBlocks("idea-9");
+    const json = JSON.stringify(blocks);
+    expect(json).toContain("Which platform(s) will this be posted on?");
+    expect(json).toContain(DRAFT_PLATFORM_ACTION);
+    expect(json).toContain("idea-9|instagram");
+    expect(json).toContain("idea-9|linkedin");
+    expect(json).toContain("idea-9|both");
+    // Button labels
+    expect(json).toContain("Instagram");
+    expect(json).toContain("LinkedIn");
+    expect(json).toContain("Both");
   });
 });
