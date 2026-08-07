@@ -120,3 +120,16 @@ export async function claimIdea(ideaId: string, repId: string): Promise<ClaimRes
   if (rErr) throw rErr;
   return classifyClaim(null, (existing as Idea) ?? null);
 }
+
+// Fetch a rep's idea by id WITHOUT changing its status. Used by the retry path,
+// which re-drafts one platform of an already-`used` idea and must not re-claim.
+export async function getIdea(ideaId: string, repId: string): Promise<Idea | null> {
+  const { data, error } = await scaClient()
+    .from("sca_ideas")
+    .select("*")
+    .eq("id", ideaId)
+    .eq("rep_id", repId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as Idea) ?? null;
+}

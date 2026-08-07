@@ -8,6 +8,8 @@ import {
   parsePlatformValue,
   platformsForSelection,
   buildPlatformChoiceBlocks,
+  DRAFT_RETRY_ACTION,
+  buildRetryBlocks,
 } from "@/lib/digest";
 import type { Idea } from "@/lib/ideas";
 import type { Profile } from "@/lib/profiles";
@@ -212,5 +214,27 @@ describe("buildPlatformChoiceBlocks", () => {
     expect(json).toContain("Instagram");
     expect(json).toContain("LinkedIn");
     expect(json).toContain("Both");
+  });
+});
+
+describe("buildRetryBlocks", () => {
+  it("offers one retry button per failed platform with encoded values and names the good draft", () => {
+    const blocks = buildRetryBlocks("idea-7", ["instagram"], "LinkedIn");
+    const json = JSON.stringify(blocks);
+    expect(json).toContain("LinkedIn"); // names the draft that landed
+    expect(json).toContain("Retry Instagram"); // button label
+    expect(json).toContain(DRAFT_RETRY_ACTION);
+    expect(json).toContain("idea-7|instagram"); // encoded value
+    // exactly one button for one failed platform
+    const actions = blocks.find((b) => b.type === "actions") as { elements: unknown[] };
+    expect(actions.elements).toHaveLength(1);
+  });
+  it("supports two failed platforms (two buttons)", () => {
+    const blocks = buildRetryBlocks("idea-7", ["linkedin", "instagram"], "");
+    const actions = blocks.find((b) => b.type === "actions") as { elements: unknown[] };
+    expect(actions.elements).toHaveLength(2);
+    const json = JSON.stringify(blocks);
+    expect(json).toContain("idea-7|linkedin");
+    expect(json).toContain("idea-7|instagram");
   });
 });

@@ -5,6 +5,7 @@ import { scaClient } from "@/lib/supabase";
 import { selectTopCandidates } from "@/lib/ideas";
 import type { Profile } from "@/lib/profiles";
 import type { Platform } from "@/lib/generation";
+import { PLATFORM_LABEL } from "@/lib/generation";
 
 // The button contract shared with the interactivity endpoint (Phase 1 step 6):
 // every "Draft this" button carries this action_id and the idea's uuid as value.
@@ -32,6 +33,34 @@ export function parsePlatformValue(
 
 export function platformsForSelection(selection: PlatformSelection): Platform[] {
   return selection === "both" ? ["linkedin", "instagram"] : [selection];
+}
+
+export const DRAFT_RETRY_ACTION = "draft_retry";
+
+// Posted on a "Both" partial failure: a short message naming the draft that DID
+// land, plus one "Retry {label}" button per failed platform. The button reuses the
+// "<ideaId>|<platform>" value encoding, so parsePlatformValue parses it too.
+export function buildRetryBlocks(
+  ideaId: string,
+  failedPlatforms: Platform[],
+  okLabel: string,
+): KnownBlock[] {
+  const failedLabel = failedPlatforms.map((p) => PLATFORM_LABEL[p]).join(" & ");
+  const lead = okLabel
+    ? `Your ${okLabel} draft is ready 👆 — I couldn't finish the ${failedLabel} one this time.`
+    : `I couldn't finish the ${failedLabel} draft this time.`;
+  return [
+    { type: "section", text: { type: "mrkdwn", text: lead } },
+    {
+      type: "actions",
+      elements: failedPlatforms.map((p) => ({
+        type: "button" as const,
+        text: { type: "plain_text" as const, text: `Retry ${PLATFORM_LABEL[p]}` },
+        action_id: DRAFT_RETRY_ACTION,
+        value: encodePlatformValue(ideaId, p),
+      })),
+    },
+  ];
 }
 
 // Pure: shape the platform-choice message for a single idea — one section

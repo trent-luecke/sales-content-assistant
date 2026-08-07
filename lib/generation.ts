@@ -102,6 +102,13 @@ export function redact(text: string, names: string[]): string {
 
 export type Platform = "linkedin" | "instagram";
 
+// Human-facing labels for the platform tokens. Shared by draft.ts (interim/partial
+// messages) and digest.ts (retry buttons) so the mapping lives in one place.
+export const PLATFORM_LABEL: Record<Platform, string> = {
+  linkedin: "LinkedIn",
+  instagram: "Instagram",
+};
+
 function renderTraits(traits: unknown[]): string {
   const list = (traits as VoiceTraitish[]) ?? [];
   return list

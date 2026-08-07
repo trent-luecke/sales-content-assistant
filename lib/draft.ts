@@ -1,11 +1,12 @@
 import { getProfileBySlackUser } from "@/lib/profiles";
 import type { Profile } from "@/lib/profiles";
-import { claimIdea, setIdeaStatus } from "@/lib/ideas";
+import { claimIdea, setIdeaStatus, getIdea } from "@/lib/ideas";
 import type { Idea } from "@/lib/ideas";
 import { readDemoMoment } from "@/lib/mining";
 import { generateDraft } from "@/lib/generation";
 import type { DemoMoment, Platform } from "@/lib/generation";
-import { parsePlatformValue, platformsForSelection, buildPlatformChoiceBlocks } from "@/lib/digest";
+import { PLATFORM_LABEL } from "@/lib/generation";
+import { parsePlatformValue, platformsForSelection, buildPlatformChoiceBlocks, buildRetryBlocks } from "@/lib/digest";
 import { createCanvasInDM } from "@/lib/slack/canvas";
 import { slack } from "@/lib/slack/client";
 import { scaClient } from "@/lib/supabase";
@@ -17,11 +18,6 @@ const OPENER =
 const REDACTED_NOTE =
   "\n\n⚠️ Heads up — I had to redact a name to keep this anonymous, so one phrase might " +
   "read a little awkwardly. Worth a quick look before you post.";
-
-const PLATFORM_LABEL: Record<Platform, string> = {
-  linkedin: "LinkedIn",
-  instagram: "Instagram",
-};
 
 // The rep's configured platforms, normalized to our lowercase Platform values.
 // Empty/unknown -> default to LinkedIn so a rep is never stuck.
@@ -68,6 +64,25 @@ async function threadTsForIdea(repId: string, ideaId: string): Promise<string | 
     .select("thread_ts")
     .eq("rep_id", repId)
     .eq("idea_id", ideaId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data?.thread_ts as string | undefined) ?? undefined;
+}
+
+// The thread_ts of an existing draft session for a specific (idea, platform), if any.
+// Used by the retry path so a re-click nudges instead of drafting a duplicate canvas.
+async function threadTsForIdeaPlatform(
+  repId: string,
+  ideaId: string,
+  platform: Platform,
+): Promise<string | undefined> {
+  const { data } = await scaClient()
+    .from("sca_thread_map")
+    .select("thread_ts")
+    .eq("rep_id", repId)
+    .eq("idea_id", ideaId)
+    .eq("platform", platform)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -129,9 +144,23 @@ async function claimAndDraft(
     return;
   }
   if (anyFail) {
-    // Partial (Both): keep the claim; name the platform that failed.
-    const failed = results.filter((r) => !r.ok).map((r) => PLATFORM_LABEL[r.platform]).join(" & ");
-    await safePost(channel, undefined, `I hit a snag on the ${failed} draft — click Draft this again to retry it.`);
+    // Partial (Both): keep the claim (a real draft landed). Offer a working per-platform
+    // retry button instead of a dead "click Draft this again" note.
+    const failedPlatforms = results.filter((r) => !r.ok).map((r) => r.platform);
+    const okLabel = results.filter((r) => r.ok).map((r) => PLATFORM_LABEL[r.platform]).join(" & ");
+    const blocks = buildRetryBlocks(ideaId, failedPlatforms, okLabel);
+    const text = `I couldn't finish the ${failedPlatforms.map((p) => PLATFORM_LABEL[p]).join(" & ")} draft this time.`;
+    // If the interim message belonged to a failed platform (index 0 failed, so it was
+    // never converted to an opener), reuse that dangling message as this slot.
+    try {
+      if (!results[0].ok && interimTs) {
+        await slack.chat.update({ channel, ts: interimTs, text, blocks });
+      } else {
+        await slack.chat.postMessage({ channel, text, blocks });
+      }
+    } catch (e) {
+      console.error("retry-offer post failed", { ideaId, error: e });
+    }
   }
 }
 
@@ -229,5 +258,56 @@ export async function handleDraftPlatform(payload: unknown): Promise<void> {
   } catch (e) {
     await safePost(channel, undefined, "Something went wrong — try again in a sec.");
     console.error("handleDraftPlatform failed (pre-claim)", { slackUserId, ideaId: parsed.ideaId, error: e });
+  }
+}
+
+// Handle a "Retry {platform}" click: re-draft ONE platform of an already-`used` idea
+// without re-claiming. Runs post-ack (inside waitUntil); must never throw.
+export async function handleDraftRetry(payload: unknown): Promise<void> {
+  const p = payload as { actions?: { value?: unknown }[]; user?: { id?: unknown }; channel?: { id?: unknown } };
+  const rawValue = p?.actions?.[0]?.value;
+  const slackUserId = p?.user?.id;
+  const channel = p?.channel?.id;
+  if (typeof rawValue !== "string" || typeof slackUserId !== "string" || typeof channel !== "string") return;
+
+  const parsed = parsePlatformValue(rawValue);
+  if (!parsed || parsed.selection === "both") return; // retry is single-platform only
+  const platform: Platform = parsed.selection; // narrowed to "linkedin" | "instagram"
+
+  try {
+    const profile = await getProfileBySlackUser(slackUserId);
+    if (!profile) {
+      await safePost(channel, undefined, "I couldn't find your profile yet — finish onboarding and try again.");
+      return;
+    }
+    const idea = await getIdea(parsed.ideaId, profile.id);
+    if (!idea) {
+      await safePost(channel, undefined, "Hmm, I couldn't find that idea — grab another from your latest digest.");
+      return;
+    }
+    // Idempotency: already have a draft session for this (idea, platform)? Nudge, don't duplicate.
+    const existingTs = await threadTsForIdeaPlatform(profile.id, parsed.ideaId, platform);
+    if (existingTs) {
+      await safePost(channel, existingTs, `You're already drafting the ${PLATFORM_LABEL[platform]} version 👆`);
+      return;
+    }
+    const interim = await slack.chat
+      .postMessage({ channel, text: `✍️ Retrying your ${PLATFORM_LABEL[platform]} draft…` })
+      .catch(() => null);
+    const meetingId =
+      typeof (idea.source_ref as { meetingId?: unknown })?.meetingId === "string"
+        ? (idea.source_ref as { meetingId: string }).meetingId
+        : null;
+    const moment =
+      idea.source === "demo" && meetingId
+        ? await readDemoMoment(meetingId).catch(() => null)
+        : null;
+    const result = await draftOnePlatform(idea, profile, channel, moment, platform, interim?.ts);
+    if (!result.ok) {
+      await updateOrPost(channel, interim?.ts, `Still couldn't draft the ${PLATFORM_LABEL[platform]} one — try again in a sec.`);
+    }
+  } catch (e) {
+    await safePost(channel, undefined, "Something went wrong — try again in a sec.");
+    console.error("handleDraftRetry failed (pre-draft)", { slackUserId, ideaId: parsed.ideaId, error: e });
   }
 }
