@@ -6,6 +6,7 @@ import {
   generateDraft,
   splitVisual,
   assembleCanvasBody,
+  canvasTitle,
   type DemoMoment,
 } from "@/lib/generation";
 import { generateText } from "ai";
@@ -194,6 +195,19 @@ describe("assembleCanvasBody", () => {
     const body = assembleCanvasBody("Just a caption", "instagram");
     expect(body).toBe("Just a caption");
     expect(body).not.toContain("Visual idea");
+  });
+});
+
+describe("canvasTitle", () => {
+  it("prefixes the hook with the platform tag", () => {
+    expect(canvasTitle("linkedin", "My great hook")).toBe("LI: My great hook");
+    expect(canvasTitle("instagram", "My great hook")).toBe("IG: My great hook");
+  });
+  it("caps at 60 chars while keeping the tag and adding an ellipsis", () => {
+    const out = canvasTitle("linkedin", "x".repeat(100));
+    expect(out.length).toBeLessThanOrEqual(60);
+    expect(out.startsWith("LI: ")).toBe(true);
+    expect(out.endsWith("…")).toBe(true);
   });
 });
 

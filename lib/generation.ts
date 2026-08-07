@@ -109,6 +109,19 @@ export const PLATFORM_LABEL: Record<Platform, string> = {
   instagram: "Instagram",
 };
 
+// Short platform tags for canvas titles (rep-facing shorthand).
+export const PLATFORM_TAG: Record<Platform, string> = {
+  linkedin: "LI",
+  instagram: "IG",
+};
+
+// A canvas title tagged with the target platform, e.g. "LI: <hook>" / "IG: <hook>",
+// capped at 60 chars (the tag is preserved; the hook is truncated with an ellipsis).
+export function canvasTitle(platform: Platform, hook: string): string {
+  const t = `${PLATFORM_TAG[platform]}: ${hook.trim()}`;
+  return t.length > 60 ? `${t.slice(0, 59)}…` : t;
+}
+
 function renderTraits(traits: unknown[]): string {
   const list = (traits as VoiceTraitish[]) ?? [];
   return list

@@ -3,7 +3,7 @@ import type { Profile } from "@/lib/profiles";
 import { claimIdea, setIdeaStatus, getIdea } from "@/lib/ideas";
 import type { Idea } from "@/lib/ideas";
 import { readDemoMoment } from "@/lib/mining";
-import { generateDraft } from "@/lib/generation";
+import { generateDraft, canvasTitle } from "@/lib/generation";
 import type { DemoMoment, Platform } from "@/lib/generation";
 import { PLATFORM_LABEL } from "@/lib/generation";
 import { parsePlatformValue, platformsForSelection, buildPlatformChoiceBlocks, buildRetryBlocks } from "@/lib/digest";
@@ -29,12 +29,6 @@ function repPlatforms(profile: { channels: unknown[] }): Platform[] {
     if (l === "instagram" && !out.includes("instagram")) out.push("instagram");
   }
   return out.length > 0 ? out : ["linkedin"];
-}
-
-// A short Canvas title from the idea's hook.
-function draftTitle(hook: string): string {
-  const h = hook.trim();
-  return h.length > 60 ? `${h.slice(0, 57)}…` : h;
 }
 
 // Post a message, optionally in a thread. Never throws (best-effort signal).
@@ -174,7 +168,7 @@ async function draftOnePlatform(
 ): Promise<{ ok: boolean; platform: Platform }> {
   try {
     const { body, wasRedacted } = await generateDraft(idea, profile, moment, platform);
-    const canvasId = await createCanvasInDM(channel, draftTitle(idea.hook), body);
+    const canvasId = await createCanvasInDM(channel, canvasTitle(platform, idea.hook), body);
 
     const openerText = wasRedacted ? OPENER + REDACTED_NOTE : OPENER;
     let threadTs = reuseTs;
