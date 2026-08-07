@@ -1,7 +1,7 @@
 import { waitUntil } from "@vercel/functions";
 import { verifySlackSignature } from "@/lib/slack/verify";
-import { handleDraftThis } from "@/lib/draft";
-import { DRAFT_THIS_ACTION } from "@/lib/digest";
+import { handleDraftThis, handleDraftPlatform, handleDraftRetry } from "@/lib/draft";
+import { DRAFT_THIS_ACTION, DRAFT_PLATFORM_ACTION, DRAFT_RETRY_ACTION } from "@/lib/digest";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120; // RAG read + up to two model calls + Canvas create
@@ -26,11 +26,15 @@ export async function POST(req: Request) {
     return new Response(null, { status: 200 });
   }
 
-  if (
-    payload.type === "block_actions" &&
-    payload.actions?.[0]?.action_id === DRAFT_THIS_ACTION
-  ) {
-    waitUntil(handleDraftThis(payload)); // ack now, do slow work after responding
+  if (payload.type === "block_actions") {
+    const actionId = payload.actions?.[0]?.action_id;
+    if (actionId === DRAFT_THIS_ACTION) {
+      waitUntil(handleDraftThis(payload)); // ack now, do slow work after responding
+    } else if (actionId === DRAFT_PLATFORM_ACTION) {
+      waitUntil(handleDraftPlatform(payload));
+    } else if (actionId === DRAFT_RETRY_ACTION) {
+      waitUntil(handleDraftRetry(payload));
+    }
   }
   return new Response(null, { status: 200 });
 }
