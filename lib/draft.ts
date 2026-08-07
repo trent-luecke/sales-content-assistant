@@ -112,7 +112,7 @@ async function claimAndDraft(
 
   const label = platforms.map((p) => PLATFORM_LABEL[p]).join(" & ");
   const interim = await slack.chat
-    .postMessage({ channel, text: `✍️ Drafting your ${label} draft${platforms.length > 1 ? "s" : ""}…` })
+    .postMessage({ channel, text: `✍️ Drafting your ${label} draft${platforms.length > 1 ? "s" : ""} in your voice… your ${platforms.length > 1 ? "canvases" : "canvas"} will appear at the top of this chat window in a few seconds.` })
     .catch(() => null);
   const interimTs = interim?.ts;
 
@@ -292,7 +292,7 @@ export async function handleDraftRetry(payload: unknown): Promise<void> {
       return;
     }
     const interim = await slack.chat
-      .postMessage({ channel, text: `✍️ Retrying your ${PLATFORM_LABEL[platform]} draft…` })
+      .postMessage({ channel, text: `✍️ Retrying your ${PLATFORM_LABEL[platform]} draft… your canvas will appear at the top of this chat window in a few seconds.` })
       .catch(() => null);
     const meetingId =
       typeof (idea.source_ref as { meetingId?: unknown })?.meetingId === "string"
