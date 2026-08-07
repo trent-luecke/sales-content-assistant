@@ -56,7 +56,7 @@ export function buildRetryBlocks(
       elements: failedPlatforms.map((p) => ({
         type: "button" as const,
         text: { type: "plain_text" as const, text: `Retry ${PLATFORM_LABEL[p]}` },
-        action_id: DRAFT_RETRY_ACTION,
+        action_id: `${DRAFT_RETRY_ACTION}:${p}`,
         value: encodePlatformValue(ideaId, p),
       })),
     },
@@ -70,7 +70,7 @@ export function buildPlatformChoiceBlocks(ideaId: string): KnownBlock[] {
   const button = (text: string, selection: PlatformSelection) => ({
     type: "button" as const,
     text: { type: "plain_text" as const, text },
-    action_id: DRAFT_PLATFORM_ACTION,
+    action_id: `${DRAFT_PLATFORM_ACTION}:${selection}`,
     value: encodePlatformValue(ideaId, selection),
   });
   return [

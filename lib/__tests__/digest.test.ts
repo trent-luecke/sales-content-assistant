@@ -215,6 +215,14 @@ describe("buildPlatformChoiceBlocks", () => {
     expect(json).toContain("LinkedIn");
     expect(json).toContain("Both");
   });
+
+  it("gives each button a unique action_id (Slack requires uniqueness within an actions block)", () => {
+    const blocks = buildPlatformChoiceBlocks("idea-9");
+    const actions = blocks.find((b) => b.type === "actions") as { elements: { action_id: string }[] };
+    const ids = actions.elements.map((e) => e.action_id);
+    expect(new Set(ids).size).toBe(3); // all unique
+    expect(ids.every((id) => id.startsWith(DRAFT_PLATFORM_ACTION))).toBe(true);
+  });
 });
 
 describe("buildRetryBlocks", () => {
@@ -236,5 +244,13 @@ describe("buildRetryBlocks", () => {
     const json = JSON.stringify(blocks);
     expect(json).toContain("idea-7|linkedin");
     expect(json).toContain("idea-7|instagram");
+  });
+
+  it("gives each retry button a unique action_id", () => {
+    const blocks = buildRetryBlocks("idea-7", ["linkedin", "instagram"], "");
+    const actions = blocks.find((b) => b.type === "actions") as { elements: { action_id: string }[] };
+    const ids = actions.elements.map((e) => e.action_id);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids.every((id) => id.startsWith(DRAFT_RETRY_ACTION))).toBe(true);
   });
 });

@@ -27,12 +27,12 @@ export async function POST(req: Request) {
   }
 
   if (payload.type === "block_actions") {
-    const actionId = payload.actions?.[0]?.action_id;
+    const actionId = payload.actions?.[0]?.action_id ?? "";
     if (actionId === DRAFT_THIS_ACTION) {
       waitUntil(handleDraftThis(payload)); // ack now, do slow work after responding
-    } else if (actionId === DRAFT_PLATFORM_ACTION) {
+    } else if (actionId.startsWith(DRAFT_PLATFORM_ACTION)) {
       waitUntil(handleDraftPlatform(payload));
-    } else if (actionId === DRAFT_RETRY_ACTION) {
+    } else if (actionId.startsWith(DRAFT_RETRY_ACTION)) {
       waitUntil(handleDraftRetry(payload));
     }
   }
