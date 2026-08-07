@@ -25,7 +25,8 @@ inherit platform-aware iteration for free.
 `buildDraftPrompt` with per-platform format instructions; a tightened "no hashtags, no emoji"
 rule on **both** platforms; an Instagram-only "Visual idea" section assembled into the canvas;
 the `sca_thread_map.platform` column; the "Both" fan-out (one claim → two independent draft
-sessions); and the refactor of `lib/draft.ts` onto a shared `claimAndDraft` spine.
+sessions); a per-platform **Retry** button on "Both" partial failure (new `draft_retry` action);
+and the refactor of `lib/draft.ts` onto a shared `claimAndDraft` spine.
 
 **Out of scope (deferred):**
 - **Grabbing a real marketing asset** (a DAM / Drive / digital-asset-library integration).
@@ -80,14 +81,23 @@ sessions); and the refactor of `lib/draft.ts` onto a shared `claimAndDraft` spin
 `DRAFT_THIS_ACTION`). The `<idea uuid>|<selection>` encoding is parsed by a pure helper (uuids
 contain no `|`).
 
+**New:** the per-platform retry button, posted only on a "Both" partial failure.
+```json
+{ "actions": [{ "action_id": "draft_retry", "value": "<idea uuid>|<platform>" }] }
+```
+`platform ∈ {"instagram", "linkedin"}` (a single platform, never "both"). `action_id` is a new
+constant `DRAFT_RETRY_ACTION = "draft_retry"`. The value reuses the same `<uuid>|<token>`
+encoding, so `parsePlatformValue` parses it too.
+
 ## Architecture
 
 ### 1. Route — `app/api/slack/interactivity/route.ts`
 
 Unchanged HTTP boundary (verify signature → parse form-encoded `payload` → ack `200` → dispatch
-in `waitUntil`), extended to dispatch a second action:
+in `waitUntil`), extended to dispatch the new actions:
 - `action_id === "draft_this"` → `waitUntil(handleDraftThis(payload))` (as today).
 - `action_id === "draft_platform"` → `waitUntil(handleDraftPlatform(payload))` (new).
+- `action_id === "draft_retry"` → `waitUntil(handleDraftRetry(payload))` (new — per-platform retry).
 
 `maxDuration = 120` stays. No business logic in the route.
 
@@ -125,10 +135,31 @@ happens here.
    subsequent platforms post fresh) → insert a `sca_thread_map` row carrying `platform`.
 5. **Failure handling** (post-ack invariant):
    - **All platforms fail** → release the claim (`setIdeaStatus(ideaId,"candidate")`), one generic
-     error; the idea is fully retryable.
+     error; the idea is fully retryable via a fresh "Draft this" click.
    - **Partial success (Both)** → **keep the claim** (a real draft exists; releasing would orphan
-     it), land the successful canvas/thread, and post a targeted note ("Your LinkedIn draft's
-     ready 👆 — I hit a snag on the Instagram one, click Draft this again to retry it").
+     it), land the successful canvas/thread, and post a targeted message naming the good draft and
+     offering a **"Retry {failed platform}"** button (see §2b) — one button per failed platform —
+     so the rep can re-draft only the failed platform without disturbing the good one. If the
+     interim "drafting…" message belonged to a failed platform (it was never converted to an
+     opener), that dangling message is reused as the slot for this targeted message.
+
+### 2b. Per-platform retry — `handleDraftRetry` (resolved 2026-08-07)
+
+The retry button (`action_id: "draft_retry"`, `value: "<ideaId>|<platform>"`) re-drafts a single
+platform for an idea that is **already `used`**. `handleDraftRetry(payload)` runs post-ack, never
+throws, and:
+1. Parses `ideaId` + `platform` (reusing `parsePlatformValue`; a `"both"` selection is invalid
+   here and is ignored).
+2. Resolves the rep, then fetches the idea via `getIdea(ideaId, repId)` (new in `lib/ideas.ts`, a
+   rep-scoped lookup that does **not** change status — retry must not re-claim). Not found → soft
+   error.
+3. **Idempotency:** if a `sca_thread_map` row already exists for `(rep_id, idea_id, platform)`,
+   nudge ("You're already drafting the {platform} version 👆") in that thread and stop. This
+   catches the common re-click; the rare rapid-double-click race is an accepted minor (the repo
+   already tolerates equivalent best-effort edges).
+4. Reads the demo moment once, then calls the same `draftOnePlatform` helper the fan-out uses →
+   one canvas + one opener + one `sca_thread_map` row for that platform. On failure, a soft error
+   (the retry button message persists, so the rep can try again).
 
 ### 3. Platform-choice message — `lib/digest.ts` (pure builder)
 
@@ -214,6 +245,8 @@ Vercel deploy.
 - Platform-selection decision — single channel → `[that]`; empty channels → `["linkedin"]`;
   `"both"` → `["linkedin","instagram"]`; `"instagram"`/`"linkedin"` → `[that]`.
 - `buildPlatformChoiceBlocks` — correct copy, three buttons, correct `action_id` and encoded values.
+- `buildRetryBlocks(ideaId, failedPlatforms)` — one "Retry {label}" button per failed platform,
+  `action_id: "draft_retry"`, value `"<ideaId>|<platform>"`; message names the good draft.
 
 **Integration (live deploy):** fire a digest via `/api/digest/generate`; as a **both-channel**
 rep click "Draft this" → the "Which platform(s)…" message appears; exercise **Instagram**,
@@ -221,14 +254,21 @@ rep click "Draft this" → the "Which platform(s)…" message appears; exercise 
 hashtags/emoji anywhere), the opener threads, and the `sca_thread_map` rows with correct
 `platform` values (two rows for "Both"). As a **single-channel** rep, confirm no question is
 asked and the draft matches that platform's shape. Re-click to confirm the *already_used* nudge.
+**Per-platform retry** is hard to trigger on demand (requires a real generation failure), so it is
+verified primarily by the unit tests on `buildRetryBlocks` + the parse/idempotency helpers; a
+best-effort live check is to confirm a "Retry" click produces exactly one new canvas + row and a
+second click nudges without duplicating.
 
 ## Risks
 
 - **Anonymization leakage (highest stakes)** — unchanged guardrail, now also covering the
   Instagram visual-concept text (guardrail runs before the split). No new exposure surface.
 - **"Both" partial failure** — mitigated by isolated per-platform sub-tasks: total failure
-  releases the claim; partial success keeps it and reports the gap honestly rather than dropping
-  a draft silently.
+  releases the claim; partial success keeps it, reports the gap honestly, and offers a working
+  per-platform **Retry** button (not a dead "click Draft this again" instruction, which the
+  kept-claim design would defeat). Retry re-drafts only the failed platform without re-claiming
+  and is idempotent on re-click via a platform-scoped `sca_thread_map` check (rapid double-click
+  is an accepted best-effort minor).
 - **`maxDuration` on "Both"** — one moment-read + two generations (each up to 2 model calls) +
   two canvas creates. Mitigated by reading the moment once and running the two generations
   concurrently. Revisit if "Both" drafts time out.
@@ -248,5 +288,8 @@ asked and the draft matches that platform's shape. Re-click to confirm the *alre
    helpers, with tests.
 5. `lib/draft.ts` — refactor to the `claimAndDraft` spine; add `handleDraftPlatform`; extend
    `handleDraftThis` with the channel branch; the "Both" fan-out + partial-failure handling.
-6. `app/api/slack/interactivity/route.ts` — dispatch `draft_platform`.
-7. Live integration verification (digest → both-channel click-through → single-channel → re-click).
+6. Per-platform retry: `getIdea` (`lib/ideas.ts`), `DRAFT_RETRY_ACTION` + `buildRetryBlocks`
+   (`lib/digest.ts`), `handleDraftRetry` + platform-scoped idempotency check (`lib/draft.ts`);
+   wire the partial-failure branch to post `buildRetryBlocks`. With tests for the pure pieces.
+7. `app/api/slack/interactivity/route.ts` — dispatch `draft_platform` and `draft_retry`.
+8. Live integration verification (digest → both-channel click-through → single-channel → re-click).
