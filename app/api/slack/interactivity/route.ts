@@ -1,7 +1,7 @@
 import { waitUntil } from "@vercel/functions";
 import { verifySlackSignature } from "@/lib/slack/verify";
-import { handleDraftThis, handleDraftPlatform, handleDraftRetry } from "@/lib/draft";
-import { DRAFT_THIS_ACTION, DRAFT_PLATFORM_ACTION, DRAFT_RETRY_ACTION } from "@/lib/digest";
+import { handleDraftThis, handleDraftPlatform, handleDraftRetry, handleDraftDone, handleDraftDoneConfirm, handleDraftDoneCancel } from "@/lib/draft";
+import { DRAFT_THIS_ACTION, DRAFT_PLATFORM_ACTION, DRAFT_RETRY_ACTION, DRAFT_DONE_ACTION, DRAFT_DONE_CONFIRM_ACTION, DRAFT_DONE_CANCEL_ACTION } from "@/lib/digest";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120; // RAG read + up to two model calls + Canvas create
@@ -34,6 +34,12 @@ export async function POST(req: Request) {
       waitUntil(handleDraftPlatform(payload));
     } else if (actionId.startsWith(DRAFT_RETRY_ACTION)) {
       waitUntil(handleDraftRetry(payload));
+    } else if (actionId === DRAFT_DONE_ACTION) {
+      waitUntil(handleDraftDone(payload));
+    } else if (actionId === DRAFT_DONE_CONFIRM_ACTION) {
+      waitUntil(handleDraftDoneConfirm(payload));
+    } else if (actionId === DRAFT_DONE_CANCEL_ACTION) {
+      waitUntil(handleDraftDoneCancel(payload));
     }
   }
   return new Response(null, { status: 200 });
