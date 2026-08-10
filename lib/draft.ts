@@ -13,9 +13,6 @@ import {
   buildRetryBlocks,
   buildOpenerBlocks,
   buildDoneConfirmBlocks,
-  DRAFT_DONE_ACTION,
-  DRAFT_DONE_CONFIRM_ACTION,
-  DRAFT_DONE_CANCEL_ACTION,
 } from "@/lib/digest";
 import { createCanvasInDM, deleteCanvas } from "@/lib/slack/canvas";
 import { slack } from "@/lib/slack/client";
@@ -332,7 +329,6 @@ export async function handleDraftRetry(payload: unknown): Promise<void> {
 
 // Shared payload shape for the cleanup handlers (buttons live on the opener message).
 type CleanupPayload = {
-  actions?: { value?: unknown }[];
   channel?: { id?: unknown };
   message?: { ts?: unknown };
   container?: { message_ts?: unknown };
