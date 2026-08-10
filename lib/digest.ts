@@ -5,7 +5,7 @@ import { scaClient } from "@/lib/supabase";
 import { selectTopCandidates } from "@/lib/ideas";
 import type { Profile } from "@/lib/profiles";
 import type { Platform } from "@/lib/generation";
-import { PLATFORM_LABEL } from "@/lib/generation";
+import { PLATFORM_LABEL, canvasTitle } from "@/lib/generation";
 
 // The button contract shared with the interactivity endpoint (Phase 1 step 6):
 // every "Draft this" button carries this action_id and the idea's uuid as value.
@@ -36,6 +36,15 @@ export function platformsForSelection(selection: PlatformSelection): Platform[] 
 }
 
 export const DRAFT_RETRY_ACTION = "draft_retry";
+
+export const DRAFT_DONE_ACTION = "draft_done";
+export const DRAFT_DONE_CONFIRM_ACTION = "draft_done_confirm";
+export const DRAFT_DONE_CANCEL_ACTION = "draft_done_cancel";
+
+// The one-time heads-up appended to an opener when a name had to be redacted.
+export const REDACTED_NOTE =
+  "\n\n⚠️ Heads up — I had to redact a name to keep this anonymous, so one phrase might " +
+  "read a little awkwardly. Worth a quick look before you post.";
 
 // Posted on a "Both" partial failure: a short message naming the draft that DID
 // land, plus one "Retry {label}" button per failed platform. The button reuses the
@@ -174,4 +183,73 @@ export async function assembleAndDeliver(
   }
 
   return { ideaCount: ideas.length, messageTs, recorded };
+}
+
+// The draft's opener message (state 1): platform-labeled, names its canvas, and carries the
+// Done button. Posted by draftOnePlatform and reverted-to by the Cancel handler.
+export function buildOpenerBlocks(
+  platform: Platform,
+  hook: string,
+  canvasId: string,
+  opts?: { wasRedacted?: boolean },
+): KnownBlock[] {
+  const caveat = opts?.wasRedacted ? REDACTED_NOTE : "";
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text:
+          `*${PLATFORM_LABEL[platform]} draft* — your first cut is in the canvas ` +
+          `*${canvasTitle(platform, hook)}* above. Reply in a thread to tell me what to change. ` +
+          `When you've posted it, hit *Done* and I'll clear the canvas.${caveat}`,
+      },
+    },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "✓ Done — clear this draft" },
+          action_id: DRAFT_DONE_ACTION,
+          value: canvasId,
+        },
+      ],
+    },
+  ];
+}
+
+// The confirm prompt (state 2): two uniquely-identified buttons.
+export function buildDoneConfirmBlocks(
+  platform: Platform,
+  hook: string,
+  canvasId: string,
+): KnownBlock[] {
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `Delete the *${canvasTitle(platform, hook)}* canvas? This can't be undone.`,
+      },
+    },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          style: "danger",
+          text: { type: "plain_text", text: "Yes, delete" },
+          action_id: DRAFT_DONE_CONFIRM_ACTION,
+          value: canvasId,
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Keep" },
+          action_id: DRAFT_DONE_CANCEL_ACTION,
+          value: canvasId,
+        },
+      ],
+    },
+  ];
 }
