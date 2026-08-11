@@ -29,20 +29,8 @@ export async function editCanvas(canvasId: string, markdown: string): Promise<vo
 
 // Delete a bot-owned Canvas (used by the cleanup "Done" flow). Throws on API error so the
 // caller can keep the sca_thread_map row and the opener message honest about what happened.
-//
-// EXPERIMENT (2026-08-07): canvases.delete removes the draft content but leaves a
-// "deleted by owner" tombstone in the DM that no API seems to remove — and those stubs
-// accumulate at the top of the DM. Try files.delete on the canvas's backing file first (a
-// canvas IS a file) to see whether it removes the canvas without the tombstone; log the
-// outcome so `vercel logs` shows what happened. Fall back to canvases.delete so the draft is
-// deleted regardless of the experiment's result (no regression).
+// NOTE (2026-08-07): both canvases.delete and files.delete leave a "deleted by owner" stub
+// pinned at the top of the DM that no API removes — see the single-canvas redesign spec.
 export async function deleteCanvas(canvasId: string): Promise<void> {
-  try {
-    const res = await slack.files.delete({ file: canvasId });
-    console.log("EXPERIMENT files.delete", { canvasId, ok: res.ok });
-    return;
-  } catch (e) {
-    console.error("EXPERIMENT files.delete failed → falling back to canvases.delete", { canvasId, error: e });
-    await slack.canvases.delete({ canvas_id: canvasId });
-  }
+  await slack.canvases.delete({ canvas_id: canvasId });
 }
