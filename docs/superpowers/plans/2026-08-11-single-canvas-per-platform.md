@@ -824,3 +824,13 @@ Expected: at most one LinkedIn + one Instagram canvas, and **no** "deleted by ow
 - `setIdeaStatus` import dropped in Task 2 (its only use removed); `deleteCanvas`/`buildDoneConfirmBlocks` imports dropped in Task 4 with their last uses. ✅
 
 **Deliberate behavior change to flag at review:** the old single-channel "release the claim on total draft failure" (`setIdeaStatus(ideaId, "candidate")`) is replaced by "keep the claim, offer a per-platform retry button" (`draftNow` → `buildRetryBlocks`) — consistent with the existing `handleDraftRetry` UX and with claim-at-commit. Called out here so the reviewer signs off intentionally.
+
+## Accepted edges & follow-ups (post-implementation, 2026-08-11)
+
+Resolved after the final whole-branch review. Fixes landed in commit `16dd2a8`:
+
+- **Retry loop no longer dead-ends (fixed):** `handleDraftRetry` now delegates to `draftNow`, so a repeat failure re-offers a working retry button instead of stranding a now-consumed idea behind a dead text message.
+- **`commitOnePlatform` never throws (fixed):** its body is wrapped in try/catch, so a Supabase read rejection can't reject the `Promise.all` in `claimAndDraft` and abandon a sibling platform on a "Both" draft.
+- **Redundant canvas lookup removed (fixed):** `draftNow`/`draftOnePlatform` take an optional tri-state `knownCanvasId` (`undefined` = look it up, `null` = none/create, string = use/edit); `commitOnePlatform` passes the value it already resolved.
+- **ACCEPTED (not fixed) — rapid double-draft race:** two *different* ideas drafted for the same `(rep, platform)` within the generate window can both see no canvas and each create one. Bounded to two, self-heals on the next draft, and produces **no tombstone** — accepted as a documented edge rather than adding per-`(rep, platform)` serialization. Documented at `currentCanvasId` in `lib/draft.ts`. Revisit only if the "exactly one canvas" guarantee must become hard.
+- **Pre-existing, unchanged — orphaned-canvas-on-insert-failure:** a first-draft create whose row insert throws leaves an untracked canvas; the edit-fallback adds a sibling case. Both leave an untracked orphan, never a tombstone. Not worsened by this branch; still owed as a separate follow-up.
