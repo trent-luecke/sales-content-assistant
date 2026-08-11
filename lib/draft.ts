@@ -1,6 +1,6 @@
 import { getProfileBySlackUser } from "@/lib/profiles";
 import type { Profile } from "@/lib/profiles";
-import { claimIdea, setIdeaStatus, getIdea } from "@/lib/ideas";
+import { claimIdea, getIdea } from "@/lib/ideas";
 import type { Idea } from "@/lib/ideas";
 import { readDemoMoment } from "@/lib/mining";
 import { generateDraft, canvasTitle } from "@/lib/generation";
@@ -12,9 +12,10 @@ import {
   buildPlatformChoiceBlocks,
   buildRetryBlocks,
   buildOpenerBlocks,
+  buildReplaceConfirmBlocks,
   buildDoneConfirmBlocks,
 } from "@/lib/digest";
-import { createCanvasInDM, deleteCanvas } from "@/lib/slack/canvas";
+import { createCanvasInDM, editCanvas, deleteCanvas } from "@/lib/slack/canvas";
 import { slack } from "@/lib/slack/client";
 import { scaClient } from "@/lib/supabase";
 
@@ -103,9 +104,51 @@ async function threadTsForIdeaPlatform(
   return (data?.thread_ts as string | undefined) ?? undefined;
 }
 
-// Claim the idea once, then draft one canvas + thread + sca_thread_map row per
-// platform. Runs post-ack; never throws. Total failure releases the claim;
-// partial success (Both) keeps it and reports the gap.
+// The reusable canvas for (rep, platform): the canvas_id of the most recent
+// sca_thread_map row for that rep + platform with a non-null canvas_id, or null.
+async function currentCanvasId(repId: string, platform: Platform): Promise<string | null> {
+  const { data } = await scaClient()
+    .from("sca_thread_map")
+    .select("canvas_id")
+    .eq("rep_id", repId)
+    .eq("platform", platform)
+    .not("canvas_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data?.canvas_id as string | undefined) ?? null;
+}
+
+// After the idea is claimed, resolve one platform independently: if the rep already
+// has a canvas for it, post a replace-confirm and stop; otherwise post an interim note
+// and draft now. Never throws.
+async function commitOnePlatform(
+  ideaId: string,
+  idea: Idea,
+  profile: Profile,
+  channel: string,
+  moment: DemoMoment | null,
+  platform: Platform,
+): Promise<void> {
+  const existing = await currentCanvasId(profile.id, platform);
+  if (existing) {
+    await slack.chat
+      .postMessage({
+        channel,
+        blocks: buildReplaceConfirmBlocks(ideaId, platform, idea.hook),
+        text: `You already have a ${PLATFORM_LABEL[platform]} draft — replace it?`,
+      })
+      .catch((e) => console.error("replace-confirm post failed", { ideaId, platform, error: e }));
+    return;
+  }
+  const interim = await slack.chat
+    .postMessage({ channel, text: `✍️ Drafting your ${PLATFORM_LABEL[platform]} draft in your voice… your canvas will appear at the top of this chat window in a few seconds.` })
+    .catch(() => null);
+  await draftNow(ideaId, idea, profile, channel, moment, platform, interim?.ts);
+}
+
+// Claim the idea once (claim-at-commit), then resolve each platform independently:
+// existing canvas -> replace-confirm; no canvas -> draft now. Runs post-ack; never throws.
 async function claimAndDraft(
   ideaId: string,
   profile: Profile,
@@ -124,12 +167,6 @@ async function claimAndDraft(
   }
   const idea = claim.idea;
 
-  const label = platforms.map((p) => PLATFORM_LABEL[p]).join(" & ");
-  const interim = await slack.chat
-    .postMessage({ channel, text: `✍️ Drafting your ${label} draft${platforms.length > 1 ? "s" : ""} in your voice… your ${platforms.length > 1 ? "canvases" : "canvas"} will appear at the top of this chat window in a few seconds.` })
-    .catch(() => null);
-  const interimTs = interim?.ts;
-
   // One shared moment read for all platforms.
   const meetingId =
     typeof (idea.source_ref as { meetingId?: unknown })?.meetingId === "string"
@@ -140,41 +177,33 @@ async function claimAndDraft(
       ? await readDemoMoment(meetingId).catch(() => null)
       : null;
 
-  // Draft each platform independently; the first reuses the interim message as
-  // its opener/thread parent, the rest post fresh. Returns ok/fail per platform.
-  const results = await Promise.all(
-    platforms.map((platform, i) =>
-      draftOnePlatform(idea, profile, channel, moment, platform, i === 0 ? interimTs : undefined),
-    ),
+  // Each platform resolves independently (a Both draft may confirm one and draft the other).
+  await Promise.all(
+    platforms.map((platform) => commitOnePlatform(ideaId, idea, profile, channel, moment, platform)),
   );
+}
 
-  const anyOk = results.some((r) => r.ok);
-  const anyFail = results.some((r) => !r.ok);
-
-  if (!anyOk) {
-    // Total failure: release the claim; turn the interim into an error.
-    await setIdeaStatus(ideaId, "candidate").catch(() => {});
-    await updateOrPost(channel, interimTs, "Something went wrong drafting that — try again in a sec.");
-    return;
-  }
-  if (anyFail) {
-    // Partial (Both): keep the claim (a real draft landed). Offer a working per-platform
-    // retry button instead of a dead "click Draft this again" note.
-    const failedPlatforms = results.filter((r) => !r.ok).map((r) => r.platform);
-    const okLabel = results.filter((r) => r.ok).map((r) => PLATFORM_LABEL[r.platform]).join(" & ");
-    const blocks = buildRetryBlocks(ideaId, failedPlatforms, okLabel);
-    const text = `I couldn't finish the ${failedPlatforms.map((p) => PLATFORM_LABEL[p]).join(" & ")} draft this time.`;
-    // If the interim message belonged to a failed platform (index 0 failed, so it was
-    // never converted to an opener), reuse that dangling message as this slot.
-    try {
-      if (!results[0].ok && interimTs) {
-        await slack.chat.update({ channel, ts: interimTs, text, blocks });
-      } else {
-        await slack.chat.postMessage({ channel, text, blocks });
-      }
-    } catch (e) {
-      console.error("retry-offer post failed", { ideaId, error: e });
-    }
+// Draft one platform (reuse-aware) and, on failure, offer a working retry button.
+// The claim is already committed at this point, so a failure keeps the idea and lets
+// the rep retry rather than silently losing it. Never throws.
+async function draftNow(
+  ideaId: string,
+  idea: Idea,
+  profile: Profile,
+  channel: string,
+  moment: DemoMoment | null,
+  platform: Platform,
+  interimTs: string | undefined,
+): Promise<void> {
+  const result = await draftOnePlatform(idea, profile, channel, moment, platform, interimTs);
+  if (result.ok) return;
+  const blocks = buildRetryBlocks(ideaId, [platform], "");
+  const text = `I couldn't finish the ${PLATFORM_LABEL[platform]} draft this time.`;
+  try {
+    if (interimTs) await slack.chat.update({ channel, ts: interimTs, text, blocks });
+    else await slack.chat.postMessage({ channel, text, blocks });
+  } catch (e) {
+    console.error("retry-offer post failed", { ideaId, platform, error: e });
   }
 }
 
@@ -188,7 +217,23 @@ async function draftOnePlatform(
 ): Promise<{ ok: boolean; platform: Platform }> {
   try {
     const { body, wasRedacted } = await generateDraft(idea, profile, moment, platform);
-    const canvasId = await createCanvasInDM(channel, canvasTitle(platform, idea.hook), body);
+
+    // Reuse the rep's existing canvas for this platform, editing it in place. If the
+    // edit fails (canvas deleted out from under us) fall back to a fresh canvas so a
+    // draft never dead-ends. If there's no existing canvas, create one.
+    const existingCanvasId = await currentCanvasId(profile.id, platform);
+    let canvasId: string;
+    if (existingCanvasId) {
+      try {
+        await editCanvas(existingCanvasId, body);
+        canvasId = existingCanvasId;
+      } catch (e) {
+        console.error("editCanvas failed; creating a fresh canvas", { repId: profile.id, platform, canvasId: existingCanvasId, error: e });
+        canvasId = await createCanvasInDM(channel, canvasTitle(platform, idea.hook), body);
+      }
+    } else {
+      canvasId = await createCanvasInDM(channel, canvasTitle(platform, idea.hook), body);
+    }
 
     const openerBlocks = buildOpenerBlocks(platform, idea.hook, canvasId, { wasRedacted });
     const openerFallback = `${PLATFORM_LABEL[platform]} draft ready — see the canvas above.`;
@@ -325,6 +370,64 @@ export async function handleDraftRetry(payload: unknown): Promise<void> {
     await safePost(channel, undefined, "Something went wrong — try again in a sec.");
     console.error("handleDraftRetry failed (pre-draft)", { slackUserId, ideaId: parsed.ideaId, error: e });
   }
+}
+
+// Replace clicked → draft this platform now (reuse-aware: edits the existing canvas)
+// without re-claiming. Reuses the confirm message as the drafting note / opener.
+// Runs post-ack (inside waitUntil); must never throw.
+export async function handleDraftReplaceConfirm(payload: unknown): Promise<void> {
+  const c = cleanupCoords(payload);
+  const p = payload as { actions?: { value?: unknown }[]; user?: { id?: unknown } };
+  const rawValue = p?.actions?.[0]?.value;
+  const slackUserId = p?.user?.id;
+  if (!c || typeof rawValue !== "string" || typeof slackUserId !== "string") return;
+
+  const parsed = parsePlatformValue(rawValue);
+  if (!parsed || parsed.selection === "both") return; // replace is single-platform only
+  const platform: Platform = parsed.selection; // narrowed to "linkedin" | "instagram"
+
+  try {
+    const profile = await getProfileBySlackUser(slackUserId);
+    if (!profile) {
+      await slack.chat.update({ channel: c.channel, ts: c.ts, text: "I couldn't find your profile yet — finish onboarding and try again.", blocks: [] }).catch(() => {});
+      return;
+    }
+    const idea = await getIdea(parsed.ideaId, profile.id);
+    if (!idea) {
+      await slack.chat.update({ channel: c.channel, ts: c.ts, text: "Hmm, I couldn't find that idea — grab another from your latest digest.", blocks: [] }).catch(() => {});
+      return;
+    }
+    // Turn the confirm message into the drafting note; draftNow reuses this ts as the opener.
+    await slack.chat.update({ channel: c.channel, ts: c.ts, text: `✍️ Replacing your ${PLATFORM_LABEL[platform]} draft in your voice…`, blocks: [] }).catch(() => {});
+    const meetingId =
+      typeof (idea.source_ref as { meetingId?: unknown })?.meetingId === "string"
+        ? (idea.source_ref as { meetingId: string }).meetingId
+        : null;
+    const moment =
+      idea.source === "demo" && meetingId
+        ? await readDemoMoment(meetingId).catch(() => null)
+        : null;
+    await draftNow(parsed.ideaId, idea, profile, c.channel, moment, platform, c.ts);
+  } catch (e) {
+    console.error("handleDraftReplaceConfirm failed", { slackUserId, ideaId: parsed.ideaId, error: e });
+  }
+}
+
+// Keep current clicked → leave the canvas untouched; the idea stays consumed.
+// Runs post-ack; never throws.
+export async function handleDraftReplaceCancel(payload: unknown): Promise<void> {
+  const c = cleanupCoords(payload);
+  if (!c) return;
+  const p = payload as { actions?: { value?: unknown }[] };
+  const rawValue = p?.actions?.[0]?.value;
+  const parsed = typeof rawValue === "string" ? parsePlatformValue(rawValue) : null;
+  const text =
+    parsed && parsed.selection !== "both"
+      ? `Kept your current ${PLATFORM_LABEL[parsed.selection]} draft 👍`
+      : "Kept your current draft 👍";
+  await slack.chat
+    .update({ channel: c.channel, ts: c.ts, text, blocks: [] })
+    .catch((e) => console.error("handleDraftReplaceCancel failed", { channel: c.channel, ts: c.ts, error: e }));
 }
 
 // Shared payload shape for the cleanup handlers (buttons live on the opener message).
