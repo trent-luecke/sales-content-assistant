@@ -39,17 +39,6 @@ async function safePost(channel: string, threadTs: string | undefined, text: str
   }
 }
 
-// Update an existing message in place (used to turn the "drafting…" note into
-// the opener / an error), or post fresh if we never got an interim ts. Never throws.
-async function updateOrPost(channel: string, ts: string | undefined, text: string): Promise<void> {
-  try {
-    if (ts) await slack.chat.update({ channel, ts, text });
-    else await slack.chat.postMessage({ channel, text });
-  } catch (e) {
-    console.error("updateOrPost failed", { channel, error: e });
-  }
-}
-
 // The thread_ts of the rep's existing draft session for an idea, if any.
 async function threadTsForIdea(repId: string, ideaId: string): Promise<string | undefined> {
   const { data } = await scaClient()
@@ -84,6 +73,10 @@ async function threadTsForIdeaPlatform(
 
 // The reusable canvas for (rep, platform): the canvas_id of the most recent
 // sca_thread_map row for that rep + platform with a non-null canvas_id, or null.
+// ACCEPTED EDGE (2026-08-11 final review): two DIFFERENT ideas drafted for the same
+// (rep, platform) within the generate window can both read null here and each create a
+// canvas — bounded to two, self-heals on the next draft, and produces NO tombstone.
+// Not serialized by design; see the plan's Risks section. Do not "fix" without sign-off.
 async function currentCanvasId(repId: string, platform: Platform): Promise<string | null> {
   const { data } = await scaClient()
     .from("sca_thread_map")
@@ -98,8 +91,7 @@ async function currentCanvasId(repId: string, platform: Platform): Promise<strin
 }
 
 // After the idea is claimed, resolve one platform independently: if the rep already
-// has a canvas for it, post a replace-confirm and stop; otherwise post an interim note
-// and draft now. Never throws.
+// has a canvas for it, post a replace-confirm and stop; otherwise draft now. Never throws.
 async function commitOnePlatform(
   ideaId: string,
   idea: Idea,
@@ -108,21 +100,27 @@ async function commitOnePlatform(
   moment: DemoMoment | null,
   platform: Platform,
 ): Promise<void> {
-  const existing = await currentCanvasId(profile.id, platform);
-  if (existing) {
-    await slack.chat
-      .postMessage({
-        channel,
-        blocks: buildReplaceConfirmBlocks(ideaId, platform, idea.hook),
-        text: `You already have a ${PLATFORM_LABEL[platform]} draft — replace it?`,
-      })
-      .catch((e) => console.error("replace-confirm post failed", { ideaId, platform, error: e }));
-    return;
+  try {
+    const existing = await currentCanvasId(profile.id, platform);
+    if (existing) {
+      await slack.chat
+        .postMessage({
+          channel,
+          blocks: buildReplaceConfirmBlocks(ideaId, platform, idea.hook),
+          text: `You already have a ${PLATFORM_LABEL[platform]} draft — replace it?`,
+        })
+        .catch((e) => console.error("replace-confirm post failed", { ideaId, platform, error: e }));
+      return;
+    }
+    const interim = await slack.chat
+      .postMessage({ channel, text: `✍️ Drafting your ${PLATFORM_LABEL[platform]} draft in your voice… your canvas will appear at the top of this chat window in a few seconds.` })
+      .catch(() => null);
+    // We already know there is no canvas for this platform (existing is null), so pass
+    // null to skip a redundant lookup inside draftOnePlatform (Fix #4).
+    await draftNow(ideaId, idea, profile, channel, moment, platform, interim?.ts, null);
+  } catch (e) {
+    console.error("commitOnePlatform failed", { ideaId, platform, error: e });
   }
-  const interim = await slack.chat
-    .postMessage({ channel, text: `✍️ Drafting your ${PLATFORM_LABEL[platform]} draft in your voice… your canvas will appear at the top of this chat window in a few seconds.` })
-    .catch(() => null);
-  await draftNow(ideaId, idea, profile, channel, moment, platform, interim?.ts);
 }
 
 // Claim the idea once (claim-at-commit), then resolve each platform independently:
@@ -172,8 +170,9 @@ async function draftNow(
   moment: DemoMoment | null,
   platform: Platform,
   interimTs: string | undefined,
+  knownCanvasId?: string | null,
 ): Promise<void> {
-  const result = await draftOnePlatform(idea, profile, channel, moment, platform, interimTs);
+  const result = await draftOnePlatform(idea, profile, channel, moment, platform, interimTs, knownCanvasId);
   if (result.ok) return;
   const blocks = buildRetryBlocks(ideaId, [platform], "");
   const text = `I couldn't finish the ${PLATFORM_LABEL[platform]} draft this time.`;
@@ -192,6 +191,7 @@ async function draftOnePlatform(
   moment: DemoMoment | null,
   platform: Platform,
   reuseTs: string | undefined,
+  knownCanvasId?: string | null,
 ): Promise<{ ok: boolean; platform: Platform }> {
   try {
     const { body, wasRedacted } = await generateDraft(idea, profile, moment, platform);
@@ -199,7 +199,8 @@ async function draftOnePlatform(
     // Reuse the rep's existing canvas for this platform, editing it in place. If the
     // edit fails (canvas deleted out from under us) fall back to a fresh canvas so a
     // draft never dead-ends. If there's no existing canvas, create one.
-    const existingCanvasId = await currentCanvasId(profile.id, platform);
+    // Use the caller's resolved value when provided (undefined = not resolved → look it up).
+    const existingCanvasId = knownCanvasId !== undefined ? knownCanvasId : await currentCanvasId(profile.id, platform);
     let canvasId: string;
     if (existingCanvasId) {
       try {
@@ -340,10 +341,7 @@ export async function handleDraftRetry(payload: unknown): Promise<void> {
       idea.source === "demo" && meetingId
         ? await readDemoMoment(meetingId).catch(() => null)
         : null;
-    const result = await draftOnePlatform(idea, profile, channel, moment, platform, interim?.ts);
-    if (!result.ok) {
-      await updateOrPost(channel, interim?.ts, `Still couldn't draft the ${PLATFORM_LABEL[platform]} one — try again in a sec.`);
-    }
+    await draftNow(parsed.ideaId, idea, profile, channel, moment, platform, interim?.ts);
   } catch (e) {
     await safePost(channel, undefined, "Something went wrong — try again in a sec.");
     console.error("handleDraftRetry failed (pre-draft)", { slackUserId, ideaId: parsed.ideaId, error: e });
