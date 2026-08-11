@@ -26,11 +26,3 @@ export async function editCanvas(canvasId: string, markdown: string): Promise<vo
     changes: [{ operation: "replace", document_content: { type: "markdown", markdown } }],
   });
 }
-
-// Delete a bot-owned Canvas (used by the cleanup "Done" flow). Throws on API error so the
-// caller can keep the sca_thread_map row and the opener message honest about what happened.
-// NOTE (2026-08-07): both canvases.delete and files.delete leave a "deleted by owner" stub
-// pinned at the top of the DM that no API removes — see the single-canvas redesign spec.
-export async function deleteCanvas(canvasId: string): Promise<void> {
-  await slack.canvases.delete({ canvas_id: canvasId });
-}

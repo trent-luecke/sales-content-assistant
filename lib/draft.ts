@@ -13,9 +13,8 @@ import {
   buildRetryBlocks,
   buildOpenerBlocks,
   buildReplaceConfirmBlocks,
-  buildDoneConfirmBlocks,
 } from "@/lib/digest";
-import { createCanvasInDM, editCanvas, deleteCanvas } from "@/lib/slack/canvas";
+import { createCanvasInDM, editCanvas } from "@/lib/slack/canvas";
 import { slack } from "@/lib/slack/client";
 import { scaClient } from "@/lib/supabase";
 
@@ -62,27 +61,6 @@ async function threadTsForIdea(repId: string, ideaId: string): Promise<string | 
     .limit(1)
     .maybeSingle();
   return (data?.thread_ts as string | undefined) ?? undefined;
-}
-
-// Resolve the draft row for an opener message by its thread_ts (= the opener's own ts).
-async function threadMapByThreadTs(
-  channel: string,
-  threadTs: string,
-): Promise<{ canvas_id: string | null; platform: Platform | null; idea_id: string | null; rep_id: string } | null> {
-  const { data } = await scaClient()
-    .from("sca_thread_map")
-    .select("canvas_id, platform, idea_id, rep_id")
-    .eq("slack_channel", channel)
-    .eq("thread_ts", threadTs)
-    .maybeSingle();
-  return (data as { canvas_id: string | null; platform: Platform | null; idea_id: string | null; rep_id: string } | null) ?? null;
-}
-
-// The hook text for a draft's idea (for rebuilding the LI:/IG: label), or a neutral fallback.
-async function hookForRow(row: { idea_id: string | null; rep_id: string }): Promise<string> {
-  if (!row.idea_id) return "this draft";
-  const idea = await getIdea(row.idea_id, row.rep_id).catch(() => null);
-  return idea?.hook ?? "this draft";
 }
 
 // The thread_ts of an existing draft session for a specific (idea, platform), if any.
@@ -235,7 +213,7 @@ async function draftOnePlatform(
       canvasId = await createCanvasInDM(channel, canvasTitle(platform, idea.hook), body);
     }
 
-    const openerBlocks = buildOpenerBlocks(platform, idea.hook, canvasId, { wasRedacted });
+    const openerBlocks = buildOpenerBlocks(platform, idea.hook, { wasRedacted });
     const openerFallback = `${PLATFORM_LABEL[platform]} draft ready — see the canvas above.`;
     let threadTs = reuseTs;
     if (reuseTs) {
@@ -376,7 +354,7 @@ export async function handleDraftRetry(payload: unknown): Promise<void> {
 // without re-claiming. Reuses the confirm message as the drafting note / opener.
 // Runs post-ack (inside waitUntil); must never throw.
 export async function handleDraftReplaceConfirm(payload: unknown): Promise<void> {
-  const c = cleanupCoords(payload);
+  const c = messageCoords(payload);
   const p = payload as { actions?: { value?: unknown }[]; user?: { id?: unknown } };
   const rawValue = p?.actions?.[0]?.value;
   const slackUserId = p?.user?.id;
@@ -416,7 +394,7 @@ export async function handleDraftReplaceConfirm(payload: unknown): Promise<void>
 // Keep current clicked → leave the canvas untouched; the idea stays consumed.
 // Runs post-ack; never throws.
 export async function handleDraftReplaceCancel(payload: unknown): Promise<void> {
-  const c = cleanupCoords(payload);
+  const c = messageCoords(payload);
   if (!c) return;
   const p = payload as { actions?: { value?: unknown }[] };
   const rawValue = p?.actions?.[0]?.value;
@@ -430,94 +408,16 @@ export async function handleDraftReplaceCancel(payload: unknown): Promise<void> 
     .catch((e) => console.error("handleDraftReplaceCancel failed", { channel: c.channel, ts: c.ts, error: e }));
 }
 
-// Shared payload shape for the cleanup handlers (buttons live on the opener message).
-type CleanupPayload = {
+// channel + message ts for a button click on one of the bot's own messages.
+type MessageActionPayload = {
   channel?: { id?: unknown };
   message?: { ts?: unknown };
   container?: { message_ts?: unknown };
 };
-function cleanupCoords(payload: unknown): { channel: string; ts: string } | null {
-  const p = payload as CleanupPayload;
+function messageCoords(payload: unknown): { channel: string; ts: string } | null {
+  const p = payload as MessageActionPayload;
   const channel = p?.channel?.id;
   const ts = p?.message?.ts ?? p?.container?.message_ts;
   if (typeof channel !== "string" || typeof ts !== "string") return null;
   return { channel, ts };
-}
-
-// Done clicked → swap the opener to the confirm prompt (state 1 → 2). Never throws.
-export async function handleDraftDone(payload: unknown): Promise<void> {
-  const c = cleanupCoords(payload);
-  if (!c) return;
-  try {
-    const row = await threadMapByThreadTs(c.channel, c.ts);
-    if (!row || !row.platform) {
-      await safePost(c.channel, c.ts, "I couldn't find that draft to clean up.");
-      return;
-    }
-    const hook = await hookForRow(row);
-    await slack.chat.update({
-      channel: c.channel,
-      ts: c.ts,
-      text: "Delete this draft's canvas?",
-      blocks: buildDoneConfirmBlocks(row.platform, hook, row.canvas_id ?? ""),
-    });
-  } catch (e) {
-    console.error("handleDraftDone failed", { channel: c.channel, ts: c.ts, error: e });
-  }
-}
-
-// Yes,delete clicked → delete the canvas, null the row's canvas_id, show Cleared (state 2 → 3).
-// Idempotent (canvas_id already null → just show Cleared); on delete error, keep the confirm
-// message and post a soft retry note. Never throws.
-export async function handleDraftDoneConfirm(payload: unknown): Promise<void> {
-  const c = cleanupCoords(payload);
-  if (!c) return;
-  try {
-    const row = await threadMapByThreadTs(c.channel, c.ts);
-    if (!row || !row.platform) {
-      await safePost(c.channel, c.ts, "I couldn't find that draft to clean up.");
-      return;
-    }
-    const cleared = `Cleared ✅ — ${PLATFORM_LABEL[row.platform]} draft canvas removed.`;
-    if (!row.canvas_id) {
-      await slack.chat.update({ channel: c.channel, ts: c.ts, text: cleared, blocks: [] }).catch(() => {});
-      return;
-    }
-    try {
-      await deleteCanvas(row.canvas_id);
-    } catch (e) {
-      console.error("deleteCanvas failed", { channel: c.channel, ts: c.ts, error: e });
-      await safePost(c.channel, c.ts, "Couldn't remove that just now — hit Yes, delete again in a sec.");
-      return; // leave the confirm message intact so the buttons remain
-    }
-    const { error } = await scaClient()
-      .from("sca_thread_map")
-      .update({ canvas_id: null })
-      .eq("slack_channel", c.channel)
-      .eq("thread_ts", c.ts);
-    if (error) console.error("null canvas_id failed after delete", { channel: c.channel, ts: c.ts, error });
-    await slack.chat.update({ channel: c.channel, ts: c.ts, text: cleared, blocks: [] }).catch(() => {});
-  } catch (e) {
-    console.error("handleDraftDoneConfirm failed", { channel: c.channel, ts: c.ts, error: e });
-  }
-}
-
-// Keep clicked → revert the opener to state 1. Never throws. (Redaction caveat is not persisted,
-// so the reverted opener omits it — accepted minor.)
-export async function handleDraftDoneCancel(payload: unknown): Promise<void> {
-  const c = cleanupCoords(payload);
-  if (!c) return;
-  try {
-    const row = await threadMapByThreadTs(c.channel, c.ts);
-    if (!row || !row.platform) return;
-    const hook = await hookForRow(row);
-    await slack.chat.update({
-      channel: c.channel,
-      ts: c.ts,
-      text: `${PLATFORM_LABEL[row.platform]} draft ready — see the canvas above.`,
-      blocks: buildOpenerBlocks(row.platform, hook, row.canvas_id ?? ""),
-    });
-  } catch (e) {
-    console.error("handleDraftDoneCancel failed", { channel: c.channel, ts: c.ts, error: e });
-  }
 }

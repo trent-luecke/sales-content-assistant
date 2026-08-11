@@ -37,10 +37,6 @@ export function platformsForSelection(selection: PlatformSelection): Platform[] 
 
 export const DRAFT_RETRY_ACTION = "draft_retry";
 
-export const DRAFT_DONE_ACTION = "draft_done";
-export const DRAFT_DONE_CONFIRM_ACTION = "draft_done_confirm";
-export const DRAFT_DONE_CANCEL_ACTION = "draft_done_cancel";
-
 export const DRAFT_REPLACE_CONFIRM_ACTION = "draft_replace_confirm";
 export const DRAFT_REPLACE_CANCEL_ACTION = "draft_replace_cancel";
 
@@ -228,12 +224,11 @@ export function buildReplaceConfirmBlocks(
   ];
 }
 
-// The draft's opener message (state 1): platform-labeled, names its canvas, and carries the
-// Done button. Posted by draftOnePlatform and reverted-to by the Cancel handler.
+// The draft's opener message: platform-labeled, names its canvas, no buttons. A new
+// opener (its own thread) is posted per draft while the canvas itself is reused.
 export function buildOpenerBlocks(
   platform: Platform,
   hook: string,
-  canvasId: string,
   opts?: { wasRedacted?: boolean },
 ): KnownBlock[] {
   const caveat = opts?.wasRedacted ? REDACTED_NOTE : "";
@@ -243,56 +238,9 @@ export function buildOpenerBlocks(
       text: {
         type: "mrkdwn",
         text:
-          `*${PLATFORM_LABEL[platform]} draft* — your first cut is in the canvas ` +
-          `*${canvasTitle(platform, hook)}* above. Reply in a thread to tell me what to change. ` +
-          `When you've posted it, hit *Done* and I'll clear the canvas.${caveat}`,
+          `*${PLATFORM_LABEL[platform]} draft* — your latest cut is in the canvas ` +
+          `*${canvasTitle(platform, hook)}* above. Reply in a thread to tell me what to change.${caveat}`,
       },
-    },
-    {
-      type: "actions",
-      elements: [
-        {
-          type: "button",
-          text: { type: "plain_text", text: "✓ Done — clear this draft" },
-          action_id: DRAFT_DONE_ACTION,
-          value: canvasId,
-        },
-      ],
-    },
-  ];
-}
-
-// The confirm prompt (state 2): two uniquely-identified buttons.
-export function buildDoneConfirmBlocks(
-  platform: Platform,
-  hook: string,
-  canvasId: string,
-): KnownBlock[] {
-  return [
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `Delete the *${canvasTitle(platform, hook)}* canvas? This can't be undone.`,
-      },
-    },
-    {
-      type: "actions",
-      elements: [
-        {
-          type: "button",
-          style: "danger",
-          text: { type: "plain_text", text: "Yes, delete" },
-          action_id: DRAFT_DONE_CONFIRM_ACTION,
-          value: canvasId,
-        },
-        {
-          type: "button",
-          text: { type: "plain_text", text: "Keep" },
-          action_id: DRAFT_DONE_CANCEL_ACTION,
-          value: canvasId,
-        },
-      ],
     },
   ];
 }

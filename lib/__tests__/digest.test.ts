@@ -11,10 +11,6 @@ import {
   DRAFT_RETRY_ACTION,
   buildRetryBlocks,
   buildOpenerBlocks,
-  buildDoneConfirmBlocks,
-  DRAFT_DONE_ACTION,
-  DRAFT_DONE_CONFIRM_ACTION,
-  DRAFT_DONE_CANCEL_ACTION,
   buildReplaceConfirmBlocks,
   DRAFT_REPLACE_CONFIRM_ACTION,
   DRAFT_REPLACE_CANCEL_ACTION,
@@ -264,39 +260,23 @@ describe("buildRetryBlocks", () => {
 });
 
 describe("buildOpenerBlocks", () => {
-  it("names the platform and the canvas, and carries one Done button", () => {
-    const blocks = buildOpenerBlocks("linkedin", "How a demo lands", "cv-1");
+  it("names the platform and the canvas, with no buttons", () => {
+    const blocks = buildOpenerBlocks("linkedin", "How a demo lands");
     const json = JSON.stringify(blocks);
     expect(json).toContain("LinkedIn draft");
     expect(json).toContain("LI: How a demo lands"); // canvasTitle output
-    const actions = blocks.find((b) => b.type === "actions") as { elements: { action_id: string; value: string }[] };
-    expect(actions.elements).toHaveLength(1);
-    expect(actions.elements[0].action_id).toBe(DRAFT_DONE_ACTION);
-    expect(actions.elements[0].value).toBe("cv-1");
+    expect(blocks.some((b) => b.type === "actions")).toBe(false); // Done button gone
   });
   it("uses IG labeling for instagram", () => {
-    const json = JSON.stringify(buildOpenerBlocks("instagram", "A tight hook", "cv-2"));
+    const json = JSON.stringify(buildOpenerBlocks("instagram", "A tight hook"));
     expect(json).toContain("Instagram draft");
     expect(json).toContain("IG: A tight hook");
   });
   it("appends the redaction caveat only when wasRedacted", () => {
-    const withNote = JSON.stringify(buildOpenerBlocks("linkedin", "h", "cv", { wasRedacted: true }));
-    const without = JSON.stringify(buildOpenerBlocks("linkedin", "h", "cv"));
+    const withNote = JSON.stringify(buildOpenerBlocks("linkedin", "h", { wasRedacted: true }));
+    const without = JSON.stringify(buildOpenerBlocks("linkedin", "h"));
     expect(withNote).toContain("redact");
     expect(without).not.toContain("redact");
-  });
-});
-
-describe("buildDoneConfirmBlocks", () => {
-  it("asks to confirm and offers two uniquely-identified buttons", () => {
-    const blocks = buildDoneConfirmBlocks("linkedin", "How a demo lands", "cv-1");
-    const json = JSON.stringify(blocks);
-    expect(json.toLowerCase()).toContain("can't be undone");
-    expect(json).toContain("LI: How a demo lands");
-    const actions = blocks.find((b) => b.type === "actions") as { elements: { action_id: string }[] };
-    const ids = actions.elements.map((e) => e.action_id);
-    expect(ids).toEqual([DRAFT_DONE_CONFIRM_ACTION, DRAFT_DONE_CANCEL_ACTION]);
-    expect(new Set(ids).size).toBe(2); // unique action_ids
   });
 });
 
