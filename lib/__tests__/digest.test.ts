@@ -15,6 +15,9 @@ import {
   DRAFT_DONE_ACTION,
   DRAFT_DONE_CONFIRM_ACTION,
   DRAFT_DONE_CANCEL_ACTION,
+  buildReplaceConfirmBlocks,
+  DRAFT_REPLACE_CONFIRM_ACTION,
+  DRAFT_REPLACE_CANCEL_ACTION,
 } from "@/lib/digest";
 import type { Idea } from "@/lib/ideas";
 import type { Profile } from "@/lib/profiles";
@@ -294,5 +297,32 @@ describe("buildDoneConfirmBlocks", () => {
     const ids = actions.elements.map((e) => e.action_id);
     expect(ids).toEqual([DRAFT_DONE_CONFIRM_ACTION, DRAFT_DONE_CANCEL_ACTION]);
     expect(new Set(ids).size).toBe(2); // unique action_ids
+  });
+});
+
+describe("buildReplaceConfirmBlocks", () => {
+  it("names the platform, references the new hook, and offers two uniquely-identified buttons", () => {
+    const blocks = buildReplaceConfirmBlocks("idea-5", "linkedin", "How a demo lands");
+    const json = JSON.stringify(blocks);
+    expect(json).toContain("LinkedIn");
+    expect(json).toContain("How a demo lands");
+    const actions = blocks.find((b) => b.type === "actions") as { elements: { action_id: string; value: string }[] };
+    const ids = actions.elements.map((e) => e.action_id);
+    expect(ids).toEqual([DRAFT_REPLACE_CONFIRM_ACTION, DRAFT_REPLACE_CANCEL_ACTION]);
+    expect(new Set(ids).size).toBe(2); // unique action_ids
+  });
+
+  it("encodes <ideaId>|<platform> on both buttons and round-trips via parsePlatformValue", () => {
+    const blocks = buildReplaceConfirmBlocks("idea-5", "instagram", "hook");
+    const actions = blocks.find((b) => b.type === "actions") as { elements: { value: string }[] };
+    for (const el of actions.elements) {
+      expect(el.value).toBe("idea-5|instagram");
+      expect(parsePlatformValue(el.value)).toEqual({ ideaId: "idea-5", selection: "instagram" });
+    }
+  });
+
+  it("neither action_id prefixes the other (safe for exact-match routing)", () => {
+    expect(DRAFT_REPLACE_CONFIRM_ACTION.startsWith(DRAFT_REPLACE_CANCEL_ACTION)).toBe(false);
+    expect(DRAFT_REPLACE_CANCEL_ACTION.startsWith(DRAFT_REPLACE_CONFIRM_ACTION)).toBe(false);
   });
 });

@@ -41,6 +41,9 @@ export const DRAFT_DONE_ACTION = "draft_done";
 export const DRAFT_DONE_CONFIRM_ACTION = "draft_done_confirm";
 export const DRAFT_DONE_CANCEL_ACTION = "draft_done_cancel";
 
+export const DRAFT_REPLACE_CONFIRM_ACTION = "draft_replace_confirm";
+export const DRAFT_REPLACE_CANCEL_ACTION = "draft_replace_cancel";
+
 // The one-time heads-up appended to an opener when a name had to be redacted.
 export const REDACTED_NOTE =
   "\n\n⚠️ Heads up — I had to redact a name to keep this anonymous, so one phrase might " +
@@ -183,6 +186,46 @@ export async function assembleAndDeliver(
   }
 
   return { ideaCount: ideas.length, messageTs, recorded };
+}
+
+// The replace-confirm prompt shown when a rep drafts a new idea for a platform that
+// already has a canvas. Two uniquely-identified buttons, both carrying the
+// "<ideaId>|<platform>" value so the confirm/cancel handlers know what to draft.
+export function buildReplaceConfirmBlocks(
+  ideaId: string,
+  platform: Platform,
+  hook: string,
+): KnownBlock[] {
+  const value = encodePlatformValue(ideaId, platform);
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text:
+          `You have a current *${PLATFORM_LABEL[platform]}* draft in its canvas. ` +
+          `Replace it with a new draft for *${hook}*?`,
+      },
+    },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          style: "primary",
+          text: { type: "plain_text", text: "Replace" },
+          action_id: DRAFT_REPLACE_CONFIRM_ACTION,
+          value,
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Keep current" },
+          action_id: DRAFT_REPLACE_CANCEL_ACTION,
+          value,
+        },
+      ],
+    },
+  ];
 }
 
 // The draft's opener message (state 1): platform-labeled, names its canvas, and carries the
