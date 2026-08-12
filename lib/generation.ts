@@ -122,6 +122,19 @@ export function canvasTitle(platform: Platform, hook: string): string {
   return t.length > 60 ? `${t.slice(0, 59)}…` : t;
 }
 
+// A stable, platform-level canvas title. There is one reused canvas per platform, so this
+// never needs to change — and Slack has no API to rename a canvas. e.g. "LinkedIn draft".
+export function canvasName(platform: Platform): string {
+  return `${PLATFORM_LABEL[platform]} draft`;
+}
+
+// The canvas document: the idea's hook as an H1 heading above the drafted body. Passed to
+// both create and the full-document reuse-edit, so the heading always names the current
+// idea even though the canvas title itself is fixed.
+export function canvasDocument(hook: string, body: string): string {
+  return `# ${hook}\n\n${body}`;
+}
+
 function renderTraits(traits: unknown[]): string {
   const list = (traits as VoiceTraitish[]) ?? [];
   return list

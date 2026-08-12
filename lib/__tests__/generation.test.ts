@@ -7,6 +7,8 @@ import {
   splitVisual,
   assembleCanvasBody,
   canvasTitle,
+  canvasName,
+  canvasDocument,
   type DemoMoment,
 } from "@/lib/generation";
 import { generateText } from "ai";
@@ -268,5 +270,22 @@ describe("generateDraft", () => {
     const res = await generateDraft(idea(), profile(), moment(), "instagram");
     expect(res.wasRedacted).toBe(true);
     expect(res.body).not.toMatch(/Chris/);
+  });
+});
+
+describe("canvasName", () => {
+  it("is a stable, platform-level title with no hook", () => {
+    expect(canvasName("linkedin")).toBe("LinkedIn draft");
+    expect(canvasName("instagram")).toBe("Instagram draft");
+  });
+});
+
+describe("canvasDocument", () => {
+  it("prefixes the body with the hook as an H1 heading", () => {
+    expect(canvasDocument("My great hook", "Body line one.")).toBe("# My great hook\n\nBody line one.");
+  });
+  it("preserves the body verbatim below the heading", () => {
+    const body = "Para one.\n\n---\n\n**Visual idea**\n\nDo X.";
+    expect(canvasDocument("Hook", body)).toBe(`# Hook\n\n${body}`);
   });
 });
