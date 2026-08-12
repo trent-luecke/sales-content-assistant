@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
-  buildDigestBlocks,
+  buildDigestHeaderBlocks,
+  buildIdeaBlocks,
   DRAFT_THIS_ACTION,
   assembleAndDeliver,
   DRAFT_PLATFORM_ACTION,
@@ -52,51 +53,33 @@ const types = (blocks: { type: string }[]) => blocks.map((b) => b.type);
 const buttons = (blocks: any[]) =>
   blocks.filter((b) => b.type === "actions").map((b) => b.elements[0]);
 
-describe("buildDigestBlocks", () => {
-  it("renders one idea: header + section + actions, no dividers", () => {
-    const blocks = buildDigestBlocks([mk("id-1", "Go quiet in the demo")]);
-    expect(types(blocks)).toEqual(["section", "section", "actions"]);
-    // First section is the header; second carries the hook + rationale.
-    const body = blocks[1] as any;
+describe("buildDigestHeaderBlocks", () => {
+  it("returns a single framing section, no buttons", () => {
+    const blocks = buildDigestHeaderBlocks();
+    expect(types(blocks)).toEqual(["section"]);
+    expect(blocks.some((b) => b.type === "actions")).toBe(false);
+    expect(JSON.stringify(blocks)).toContain("worth saying this week");
+  });
+});
+
+describe("buildIdeaBlocks", () => {
+  it("renders one idea as a section + a single Draft this button carrying the idea id", () => {
+    const blocks = buildIdeaBlocks(mk("id-1", "Go quiet in the demo"));
+    expect(types(blocks)).toEqual(["section", "actions"]);
+    const body = blocks[0] as any;
     expect(body.text.type).toBe("mrkdwn");
     expect(body.text.text).toContain("Go quiet in the demo");
     expect(body.text.text).toContain("why Go quiet in the demo lands");
-  });
-
-  it("puts a divider between ideas but never after the last", () => {
-    const blocks = buildDigestBlocks([
-      mk("id-1", "A"),
-      mk("id-2", "B"),
-      mk("id-3", "C"),
-    ]);
-    // header, (section,actions), divider, (section,actions), divider, (section,actions)
-    expect(types(blocks)).toEqual([
-      "section",
-      "section", "actions",
-      "divider",
-      "section", "actions",
-      "divider",
-      "section", "actions",
-    ]);
-  });
-
-  it("gives every button the draft_this action_id and the idea id as value", () => {
-    const blocks = buildDigestBlocks([mk("id-1", "A"), mk("id-2", "B")]);
     const btns = buttons(blocks);
-    expect(btns).toHaveLength(2);
-    for (const b of btns) expect(b.action_id).toBe(DRAFT_THIS_ACTION);
-    expect(btns.map((b) => b.value)).toEqual(["id-1", "id-2"]);
+    expect(btns).toHaveLength(1);
+    expect(btns[0].action_id).toBe(DRAFT_THIS_ACTION);
+    expect(btns[0].value).toBe("id-1");
     expect(DRAFT_THIS_ACTION).toBe("draft_this");
-  });
-
-  it("returns only the header when there are no ideas", () => {
-    // Defensive: assembleAndDeliver skips the empty case, but the shaper stays total.
-    expect(types(buildDigestBlocks([]))).toEqual(["section"]);
   });
 
   it("throws when an idea is missing its id", () => {
     const noId = { ...mk("x", "hook"), id: undefined } as Idea;
-    expect(() => buildDigestBlocks([noId])).toThrow(/missing an id/);
+    expect(() => buildIdeaBlocks(noId)).toThrow(/missing an id/);
   });
 });
 
@@ -147,7 +130,7 @@ describe("assembleAndDeliver", () => {
     expect(insertMock).not.toHaveBeenCalled();
   });
 
-  it("delivers the digest and records it on the happy path", async () => {
+  it("delivers a header + one message per idea and records it on the happy path", async () => {
     const ideas: Idea[] = [
       mk("idea-1", "Go quiet in the demo"),
       mk("idea-2", "Ask about budget owner"),
@@ -156,14 +139,20 @@ describe("assembleAndDeliver", () => {
 
     const result = await assembleAndDeliver(profile);
 
-    expect(slack.chat.postMessage).toHaveBeenCalledTimes(1);
-    expect(insertMock).toHaveBeenCalledTimes(1);
+    // 1 header + 2 idea messages
+    expect(slack.chat.postMessage).toHaveBeenCalledTimes(3);
+    const calls = vi.mocked(slack.chat.postMessage).mock.calls;
+    // First post is the header — no Draft this button.
+    expect(JSON.stringify((calls[0][0] as any).blocks)).not.toContain(DRAFT_THIS_ACTION);
+    // The two idea posts each carry a Draft this button with the idea id.
+    expect(JSON.stringify((calls[1][0] as any).blocks)).toContain("idea-1");
+    expect(JSON.stringify((calls[2][0] as any).blocks)).toContain("idea-2");
 
+    expect(insertMock).toHaveBeenCalledTimes(1);
     const insertArg = insertMock.mock.calls[0][0];
-    expect(Object.keys(insertArg).sort()).toEqual(["idea_ids", "message_ts", "rep_id"]);
     expect(insertArg.rep_id).toBe(profile.id);
     expect(insertArg.idea_ids).toEqual(["idea-1", "idea-2"]);
-    expect(insertArg.message_ts).toBe(MOCK_TS);
+    expect(insertArg.message_ts).toBe(MOCK_TS); // the header message ts
 
     expect(result).toEqual({ ideaCount: 2, messageTs: MOCK_TS, recorded: true });
   });
@@ -176,7 +165,8 @@ describe("assembleAndDeliver", () => {
 
     const result = await assembleAndDeliver(profile);
 
-    expect(slack.chat.postMessage).toHaveBeenCalledTimes(1);
+    // header + 1 idea message
+    expect(slack.chat.postMessage).toHaveBeenCalledTimes(2);
     expect(result).toEqual({ ideaCount: 1, messageTs: MOCK_TS, recorded: false });
     expect(consoleErrorSpy).toHaveBeenCalled();
 

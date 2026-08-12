@@ -97,30 +97,29 @@ export function buildPlatformChoiceBlocks(ideaId: string): KnownBlock[] {
   ];
 }
 
-// Pure: shape ideas into a single Block Kit message. Header, then per idea a
-// section (bold hook + rationale) and an actions block with one "Draft this"
-// button; dividers separate ideas but never trail the last one.
-export function buildDigestBlocks(ideas: Idea[]): KnownBlock[] {
-  const blocks: KnownBlock[] = [
+// Pure: the digest's lead-in message — one framing section, no buttons.
+export function buildDigestHeaderBlocks(): KnownBlock[] {
+  return [
     {
       type: "section",
-      text: {
-        type: "mrkdwn",
-        text: "Here are a few things worth saying this week.",
-      },
+      text: { type: "mrkdwn", text: "Here are a few things worth saying this week." },
     },
   ];
+}
 
-  ideas.forEach((idea, i) => {
-    if (!idea.id) {
-      throw new Error("buildDigestBlocks: idea is missing an id (cannot build a draft_this button)");
-    }
-    if (i > 0) blocks.push({ type: "divider" });
-    blocks.push({
+// Pure: one idea as its own message — a section (bold hook + rationale) and an actions
+// block with a single "Draft this" button carrying the idea id. This message's ts becomes
+// the idea's thread root, so drafting nests under it.
+export function buildIdeaBlocks(idea: Idea): KnownBlock[] {
+  if (!idea.id) {
+    throw new Error("buildIdeaBlocks: idea is missing an id (cannot build a draft_this button)");
+  }
+  return [
+    {
       type: "section",
       text: { type: "mrkdwn", text: `*${idea.hook}*\n${idea.rationale}` },
-    });
-    blocks.push({
+    },
+    {
       type: "actions",
       elements: [
         {
@@ -130,10 +129,8 @@ export function buildDigestBlocks(ideas: Idea[]): KnownBlock[] {
           value: idea.id,
         },
       ],
-    });
-  });
-
-  return blocks;
+    },
+  ];
 }
 
 // Select the rep's top candidate ideas, DM them the digest with "Draft this"
@@ -151,20 +148,23 @@ export async function assembleAndDeliver(
   const ideas = await selectTopCandidates(profile.id, 3);
   if (ideas.length === 0) return { ideaCount: 0, messageTs: null, recorded: false };
 
-  const blocks = buildDigestBlocks(ideas);
-  const fallback = `You have ${ideas.length} content idea${ideas.length === 1 ? "" : "s"} ready.`;
-
-  // Open (or reuse) the bot↔rep DM, then post the digest there.
+  // Open (or reuse) the bot↔rep DM.
   const opened = await slack.conversations.open({ users: profile.slack_user_id });
   const channel = opened.channel?.id;
   if (!channel) throw new Error("could not open DM channel for rep");
 
-  const posted = await slack.chat.postMessage({ channel, blocks, text: fallback });
-  const messageTs = posted.ts ?? null;
+  // Header message first — its ts is the delivery marker we record.
+  const headerFallback = `You have ${ideas.length} content idea${ideas.length === 1 ? "" : "s"} ready.`;
+  const header = await slack.chat.postMessage({ channel, blocks: buildDigestHeaderBlocks(), text: headerFallback });
+  const messageTs = header.ts ?? null;
 
-  // Record the delivery. idea ids are non-null here (rows came from the DB).
-  // The DM already went out — a logging failure here must not surface as an
-  // error to the caller (that would trigger a retry and a second DM).
+  // Then one top-level message per idea; each becomes that idea's thread root.
+  for (const idea of ideas) {
+    await slack.chat.postMessage({ channel, blocks: buildIdeaBlocks(idea), text: `Draft idea: ${idea.hook}` });
+  }
+
+  // Record the delivery. The DM already went out — a logging failure must not surface as an
+  // error (that would trigger a retry and a duplicate send).
   let recorded = false;
   try {
     const { error } = await scaClient().from("sca_digests").insert({
