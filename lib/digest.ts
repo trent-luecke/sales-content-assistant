@@ -5,7 +5,7 @@ import { scaClient } from "@/lib/supabase";
 import { selectTopCandidates } from "@/lib/ideas";
 import type { Profile } from "@/lib/profiles";
 import type { Platform } from "@/lib/generation";
-import { PLATFORM_LABEL, canvasTitle } from "@/lib/generation";
+import { PLATFORM_LABEL } from "@/lib/generation";
 
 // The button contract shared with the interactivity endpoint (Phase 1 step 6):
 // every "Draft this" button carries this action_id and the idea's uuid as value.
@@ -228,7 +228,6 @@ export function buildReplaceConfirmBlocks(
 // opener (its own thread) is posted per draft while the canvas itself is reused.
 export function buildOpenerBlocks(
   platform: Platform,
-  hook: string,
   opts?: { wasRedacted?: boolean },
 ): KnownBlock[] {
   const caveat = opts?.wasRedacted ? REDACTED_NOTE : "";
@@ -238,8 +237,8 @@ export function buildOpenerBlocks(
       text: {
         type: "mrkdwn",
         text:
-          `*${PLATFORM_LABEL[platform]} draft* — your latest cut is in the canvas ` +
-          `*${canvasTitle(platform, hook)}* above. Reply in a thread to tell me what to change.${caveat}`,
+          `Your *${PLATFORM_LABEL[platform]}* draft is in the canvas at the top of this chat. ` +
+          `Reply in this thread to tell me what to change.${caveat}`,
       },
     },
   ];

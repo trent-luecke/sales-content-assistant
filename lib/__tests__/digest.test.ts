@@ -260,21 +260,19 @@ describe("buildRetryBlocks", () => {
 });
 
 describe("buildOpenerBlocks", () => {
-  it("names the platform and the canvas, with no buttons", () => {
-    const blocks = buildOpenerBlocks("linkedin", "How a demo lands");
+  it("names the platform's canvas, with no buttons", () => {
+    const blocks = buildOpenerBlocks("linkedin");
     const json = JSON.stringify(blocks);
-    expect(json).toContain("LinkedIn draft");
-    expect(json).toContain("LI: How a demo lands"); // canvasTitle output
-    expect(blocks.some((b) => b.type === "actions")).toBe(false); // Done button gone
+    expect(json).toContain("LinkedIn");
+    expect(json).toContain("canvas");
+    expect(blocks.some((b) => b.type === "actions")).toBe(false);
   });
-  it("uses IG labeling for instagram", () => {
-    const json = JSON.stringify(buildOpenerBlocks("instagram", "A tight hook"));
-    expect(json).toContain("Instagram draft");
-    expect(json).toContain("IG: A tight hook");
+  it("uses the Instagram label for instagram", () => {
+    expect(JSON.stringify(buildOpenerBlocks("instagram"))).toContain("Instagram");
   });
   it("appends the redaction caveat only when wasRedacted", () => {
-    const withNote = JSON.stringify(buildOpenerBlocks("linkedin", "h", { wasRedacted: true }));
-    const without = JSON.stringify(buildOpenerBlocks("linkedin", "h"));
+    const withNote = JSON.stringify(buildOpenerBlocks("linkedin", { wasRedacted: true }));
+    const without = JSON.stringify(buildOpenerBlocks("linkedin"));
     expect(withNote).toContain("redact");
     expect(without).not.toContain("redact");
   });

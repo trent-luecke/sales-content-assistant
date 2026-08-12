@@ -3,7 +3,7 @@ import type { Profile } from "@/lib/profiles";
 import { claimIdea, getIdea } from "@/lib/ideas";
 import type { Idea } from "@/lib/ideas";
 import { readDemoMoment } from "@/lib/mining";
-import { generateDraft, canvasTitle } from "@/lib/generation";
+import { generateDraft, canvasName, canvasDocument } from "@/lib/generation";
 import type { DemoMoment, Platform } from "@/lib/generation";
 import { PLATFORM_LABEL } from "@/lib/generation";
 import {
@@ -195,6 +195,7 @@ async function draftOnePlatform(
 ): Promise<{ ok: boolean; platform: Platform }> {
   try {
     const { body, wasRedacted } = await generateDraft(idea, profile, moment, platform);
+    const document = canvasDocument(idea.hook, body);
 
     // Reuse the rep's existing canvas for this platform, editing it in place. If the
     // edit fails (canvas deleted out from under us) fall back to a fresh canvas so a
@@ -204,17 +205,17 @@ async function draftOnePlatform(
     let canvasId: string;
     if (existingCanvasId) {
       try {
-        await editCanvas(existingCanvasId, body);
+        await editCanvas(existingCanvasId, document);
         canvasId = existingCanvasId;
       } catch (e) {
         console.error("editCanvas failed; creating a fresh canvas", { repId: profile.id, platform, canvasId: existingCanvasId, error: e });
-        canvasId = await createCanvasInDM(channel, canvasTitle(platform, idea.hook), body);
+        canvasId = await createCanvasInDM(channel, canvasName(platform), document);
       }
     } else {
-      canvasId = await createCanvasInDM(channel, canvasTitle(platform, idea.hook), body);
+      canvasId = await createCanvasInDM(channel, canvasName(platform), document);
     }
 
-    const openerBlocks = buildOpenerBlocks(platform, idea.hook, { wasRedacted });
+    const openerBlocks = buildOpenerBlocks(platform, { wasRedacted });
     const openerFallback = `${PLATFORM_LABEL[platform]} draft ready — see the canvas above.`;
     let threadTs = reuseTs;
     if (reuseTs) {
