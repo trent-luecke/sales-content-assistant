@@ -136,6 +136,12 @@ describe("assembleAndDeliver", () => {
       mk("idea-2", "Ask about budget owner"),
     ];
     vi.mocked(selectTopCandidates).mockResolvedValue(ideas);
+    // Distinct per-call ts values so the header ts is provably the one recorded
+    // (a constant ts across all calls wouldn't discriminate header vs. idea posts).
+    vi.mocked(slack.chat.postMessage)
+      .mockResolvedValueOnce({ ok: true, ts: "header-ts" } as never)
+      .mockResolvedValueOnce({ ok: true, ts: "idea-1-ts" } as never)
+      .mockResolvedValueOnce({ ok: true, ts: "idea-2-ts" } as never);
 
     const result = await assembleAndDeliver(profile);
 
@@ -152,14 +158,17 @@ describe("assembleAndDeliver", () => {
     const insertArg = insertMock.mock.calls[0][0];
     expect(insertArg.rep_id).toBe(profile.id);
     expect(insertArg.idea_ids).toEqual(["idea-1", "idea-2"]);
-    expect(insertArg.message_ts).toBe(MOCK_TS); // the header message ts
+    expect(insertArg.message_ts).toBe("header-ts");
 
-    expect(result).toEqual({ ideaCount: 2, messageTs: MOCK_TS, recorded: true });
+    expect(result).toEqual({ ideaCount: 2, messageTs: "header-ts", recorded: true });
   });
 
   it("does not throw when the sca_digests insert fails after the DM was delivered", async () => {
     const ideas: Idea[] = [mk("idea-1", "Go quiet in the demo")];
     vi.mocked(selectTopCandidates).mockResolvedValue(ideas);
+    vi.mocked(slack.chat.postMessage)
+      .mockResolvedValueOnce({ ok: true, ts: "header-ts" } as never)
+      .mockResolvedValueOnce({ ok: true, ts: "idea-1-ts" } as never);
     insertMock.mockResolvedValue({ error: { message: "boom" } });
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -167,7 +176,7 @@ describe("assembleAndDeliver", () => {
 
     // header + 1 idea message
     expect(slack.chat.postMessage).toHaveBeenCalledTimes(2);
-    expect(result).toEqual({ ideaCount: 1, messageTs: MOCK_TS, recorded: false });
+    expect(result).toEqual({ ideaCount: 1, messageTs: "header-ts", recorded: false });
     expect(consoleErrorSpy).toHaveBeenCalled();
 
     consoleErrorSpy.mockRestore();
