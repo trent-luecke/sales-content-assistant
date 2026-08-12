@@ -137,11 +137,11 @@ async function claimAndDraft(
   const claim = await claimIdea(ideaId, profile.id);
   if (claim.outcome === "already_used") {
     const existingTs = await threadTsForIdea(profile.id, ideaId);
-    await safePost(channel, existingTs, "You're already drafting this one 👆");
+    await safePost(channel, existingTs ?? rootTs, "You're already drafting this one 👆");
     return;
   }
   if (claim.outcome === "not_found") {
-    await safePost(channel, undefined, "Hmm, I couldn't find that idea — grab another from your latest digest.");
+    await safePost(channel, rootTs, "Hmm, I couldn't find that idea — grab another from your latest digest.");
     return;
   }
   const idea = claim.idea;
