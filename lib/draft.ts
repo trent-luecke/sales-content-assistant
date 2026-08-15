@@ -3,16 +3,18 @@ import type { Profile } from "@/lib/profiles";
 import { claimIdea, getIdea } from "@/lib/ideas";
 import type { Idea } from "@/lib/ideas";
 import { readDemoMoment } from "@/lib/mining";
-import { generateDraft, canvasName, canvasDocument } from "@/lib/generation";
+import { generateDraft, refineDraft, canvasName, canvasDocument } from "@/lib/generation";
 import type { DemoMoment, Platform } from "@/lib/generation";
-import { PLATFORM_LABEL } from "@/lib/generation";
+import { PLATFORM_LABEL, REFINE_LABEL } from "@/lib/generation";
 import {
   parsePlatformValue,
   platformsForSelection,
+  parseRefineKind,
   buildPlatformChoiceBlocks,
   buildRetryBlocks,
   buildOpenerBlocks,
   buildReplaceConfirmBlocks,
+  REDACTED_NOTE,
 } from "@/lib/digest";
 import { createCanvasInDM, editCanvas } from "@/lib/slack/canvas";
 import { slack } from "@/lib/slack/client";
@@ -37,6 +39,17 @@ async function safePost(channel: string, threadTs: string | undefined, text: str
   } catch (e) {
     console.error("safePost failed", { channel, error: e });
   }
+}
+
+// Read the demo moment behind an idea (for the anonymization forbidden-list), or null
+// for organic ideas / on any read failure. Never throws.
+async function readMoment(idea: Idea): Promise<DemoMoment | null> {
+  const meetingId =
+    typeof (idea.source_ref as { meetingId?: unknown })?.meetingId === "string"
+      ? (idea.source_ref as { meetingId: string }).meetingId
+      : null;
+  if (idea.source !== "demo" || !meetingId) return null;
+  return readDemoMoment(meetingId).catch(() => null);
 }
 
 // The thread_ts of the rep's existing draft session for an idea, if any.
@@ -88,6 +101,30 @@ async function currentCanvasId(repId: string, platform: Platform): Promise<strin
     .limit(1)
     .maybeSingle();
   return (data?.canvas_id as string | undefined) ?? null;
+}
+
+// The most-recent draft session for a specific (rep, idea, platform): its row id, canvas,
+// and the stored body a refine will build on. null when no such row exists.
+async function draftStateForIdeaPlatform(
+  repId: string,
+  ideaId: string,
+  platform: Platform,
+): Promise<{ rowId: string; canvasId: string | null; draftBody: string | null } | null> {
+  const { data } = await scaClient()
+    .from("sca_thread_map")
+    .select("id, canvas_id, draft_body")
+    .eq("rep_id", repId)
+    .eq("idea_id", ideaId)
+    .eq("platform", platform)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!data) return null;
+  return {
+    rowId: data.id as string,
+    canvasId: (data.canvas_id as string | null) ?? null,
+    draftBody: (data.draft_body as string | null) ?? null,
+  };
 }
 
 // After the idea is claimed, resolve one platform independently: if the rep already
@@ -359,6 +396,80 @@ export async function handleDraftRetry(payload: unknown): Promise<void> {
   } catch (e) {
     await safePost(channel, rootTs, "Something went wrong — try again in a sec.");
     console.error("handleDraftRetry failed (pre-draft)", { slackUserId, ideaId: parsed.ideaId, error: e });
+  }
+}
+
+// Handle a "refine:<kind>" click: regenerate this (idea, platform) draft building on the
+// stored body, edit the canvas in place, persist the new body, and confirm in-thread.
+// Runs post-ack (inside waitUntil); must never throw.
+export async function handleRefine(payload: unknown): Promise<void> {
+  const p = payload as {
+    actions?: { action_id?: unknown; value?: unknown }[];
+    user?: { id?: unknown };
+    channel?: { id?: unknown };
+  };
+  const actionId = p?.actions?.[0]?.action_id;
+  const rawValue = p?.actions?.[0]?.value;
+  const slackUserId = p?.user?.id;
+  const channel = p?.channel?.id;
+  if (
+    typeof actionId !== "string" ||
+    typeof rawValue !== "string" ||
+    typeof slackUserId !== "string" ||
+    typeof channel !== "string"
+  ) {
+    return;
+  }
+
+  const kind = parseRefineKind(actionId);
+  const parsed = parsePlatformValue(rawValue);
+  if (!kind || !parsed || parsed.selection === "both") return; // refine is single-platform
+  const platform: Platform = parsed.selection; // narrowed to "linkedin" | "instagram"
+
+  const rootTs = threadRoot(payload);
+
+  try {
+    const profile = await getProfileBySlackUser(slackUserId);
+    if (!profile) {
+      await safePost(channel, rootTs, "I couldn't find your profile yet — finish onboarding and try again.");
+      return;
+    }
+
+    const state = await draftStateForIdeaPlatform(profile.id, parsed.ideaId, platform);
+    if (!state || !state.canvasId) {
+      await safePost(channel, rootTs, "That draft's gone — grab a fresh one from your latest digest and I'll tweak that.");
+      return;
+    }
+    const idea = await getIdea(parsed.ideaId, profile.id);
+    if (!idea) {
+      await safePost(channel, rootTs, "Hmm, I couldn't find that idea — grab another from your latest digest.");
+      return;
+    }
+
+    const interim = await slack.chat
+      .postMessage({ channel, thread_ts: rootTs, text: `↻ Reworking your ${PLATFORM_LABEL[platform]} draft…` })
+      .catch(() => null);
+
+    const moment = await readMoment(idea);
+
+    // Build on the stored body. Legacy rows (pre-migration) have no body: reconstruct a
+    // baseline once, then apply the directive — self-heals the row on the persist below.
+    const baseBody = state.draftBody ?? (await generateDraft(idea, profile, moment, platform)).body;
+    const { body, wasRedacted } = await refineDraft(baseBody, kind, idea, profile, moment, platform);
+
+    await editCanvas(state.canvasId, canvasDocument(idea.hook, body));
+    await scaClient().from("sca_thread_map").update({ draft_body: body }).eq("id", state.rowId);
+
+    const caveat = wasRedacted ? REDACTED_NOTE : "";
+    const done = `↻ ${REFINE_LABEL[kind]} — updated your ${PLATFORM_LABEL[platform]} canvas above.${caveat}`;
+    if (interim?.ts) {
+      await slack.chat.update({ channel, ts: interim.ts, text: done }).catch(() => {});
+    } else {
+      await safePost(channel, rootTs, done);
+    }
+  } catch (e) {
+    await safePost(channel, rootTs, "Something went wrong — try again in a sec.");
+    console.error("handleRefine failed", { slackUserId, ideaId: parsed.ideaId, platform, error: e });
   }
 }
 
