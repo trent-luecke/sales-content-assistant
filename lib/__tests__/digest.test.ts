@@ -15,7 +15,10 @@ import {
   buildReplaceConfirmBlocks,
   DRAFT_REPLACE_CONFIRM_ACTION,
   DRAFT_REPLACE_CANCEL_ACTION,
+  REFINE_ACTION,
+  parseRefineKind,
 } from "@/lib/digest";
+import { REFINE_KINDS } from "@/lib/generation";
 import type { Idea } from "@/lib/ideas";
 import type { Profile } from "@/lib/profiles";
 
@@ -259,21 +262,49 @@ describe("buildRetryBlocks", () => {
 });
 
 describe("buildOpenerBlocks", () => {
-  it("names the platform's canvas, with no buttons", () => {
-    const blocks = buildOpenerBlocks("linkedin");
-    const json = JSON.stringify(blocks);
-    expect(json).toContain("LinkedIn");
-    expect(json).toContain("canvas");
-    expect(blocks.some((b) => b.type === "actions")).toBe(false);
+  it("has a section plus an actions block", () => {
+    const blocks = buildOpenerBlocks("idea-1", "linkedin");
+    expect(types(blocks)).toEqual(["section", "actions"]);
   });
-  it("uses the Instagram label for instagram", () => {
-    expect(JSON.stringify(buildOpenerBlocks("instagram"))).toContain("Instagram");
+
+  it("names the platform in the section copy", () => {
+    expect(JSON.stringify(buildOpenerBlocks("idea-1", "instagram"))).toContain("Instagram");
   });
-  it("appends the redaction caveat only when wasRedacted", () => {
-    const withNote = JSON.stringify(buildOpenerBlocks("linkedin", { wasRedacted: true }));
-    const without = JSON.stringify(buildOpenerBlocks("linkedin"));
+
+  it("emits one refine button per kind, each with a unique action_id", () => {
+    const blocks = buildOpenerBlocks("idea-1", "linkedin");
+    const actions = blocks.find((b) => b.type === "actions") as { elements: { action_id: string; value: string }[] };
+    expect(actions.elements).toHaveLength(REFINE_KINDS.length);
+    const ids = actions.elements.map((e) => e.action_id);
+    expect(new Set(ids).size).toBe(REFINE_KINDS.length); // all unique
+    for (const id of ids) expect(id.startsWith("refine:")).toBe(true);
+  });
+
+  it("every refine button carries the ideaId|platform value", () => {
+    const blocks = buildOpenerBlocks("idea-1", "linkedin");
+    const actions = blocks.find((b) => b.type === "actions") as { elements: { value: string }[] };
+    for (const el of actions.elements) expect(el.value).toBe("idea-1|linkedin");
+  });
+
+  it("appends the redaction caveat only when wasRedacted is set", () => {
+    const withNote = JSON.stringify(buildOpenerBlocks("idea-1", "linkedin", { wasRedacted: true }));
+    const without = JSON.stringify(buildOpenerBlocks("idea-1", "linkedin"));
     expect(withNote).toContain("redact");
     expect(without).not.toContain("redact");
+  });
+});
+
+describe("parseRefineKind", () => {
+  it("returns the kind for a valid refine action_id", () => {
+    expect(parseRefineKind("refine:shorter")).toBe("shorter");
+    expect(parseRefineKind("refine:different_angle")).toBe("different_angle");
+  });
+  it("returns null for an unknown kind", () => {
+    expect(parseRefineKind("refine:bogus")).toBeNull();
+  });
+  it("returns null when the prefix is wrong", () => {
+    expect(parseRefineKind("draft_this")).toBeNull();
+    expect(parseRefineKind("shorter")).toBeNull();
   });
 });
 

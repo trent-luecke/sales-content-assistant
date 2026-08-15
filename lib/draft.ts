@@ -176,7 +176,7 @@ async function draftNow(
   knownCanvasId?: string | null,
   rootTs?: string,
 ): Promise<void> {
-  const result = await draftOnePlatform(idea, profile, channel, moment, platform, interimTs, knownCanvasId, rootTs);
+  const result = await draftOnePlatform(ideaId, idea, profile, channel, moment, platform, interimTs, knownCanvasId, rootTs);
   if (result.ok) return;
   const blocks = buildRetryBlocks(ideaId, [platform], "");
   const text = `I couldn't finish the ${PLATFORM_LABEL[platform]} draft this time.`;
@@ -189,6 +189,7 @@ async function draftNow(
 }
 
 async function draftOnePlatform(
+  ideaId: string,
   idea: Idea,
   profile: Profile,
   channel: string,
@@ -220,7 +221,7 @@ async function draftOnePlatform(
       canvasId = await createCanvasInDM(channel, canvasName(platform), document);
     }
 
-    const openerBlocks = buildOpenerBlocks(platform, { wasRedacted });
+    const openerBlocks = buildOpenerBlocks(ideaId, platform, { wasRedacted });
     const openerFallback = `${PLATFORM_LABEL[platform]} draft ready — see the canvas above.`;
     let threadTs = reuseTs;
     if (reuseTs) {
@@ -236,7 +237,7 @@ async function draftOnePlatform(
       slack_channel: channel,
       thread_ts: threadTs,
       canvas_id: canvasId,
-      idea_id: idea.id,
+      idea_id: ideaId,
       platform,
       draft_body: body,
     });

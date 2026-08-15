@@ -4,8 +4,8 @@ import { slack } from "@/lib/slack/client";
 import { scaClient } from "@/lib/supabase";
 import { selectTopCandidates } from "@/lib/ideas";
 import type { Profile } from "@/lib/profiles";
-import type { Platform } from "@/lib/generation";
-import { PLATFORM_LABEL } from "@/lib/generation";
+import type { Platform, RefineKind } from "@/lib/generation";
+import { PLATFORM_LABEL, REFINE_KINDS, REFINE_LABEL } from "@/lib/generation";
 
 // The button contract shared with the interactivity endpoint (Phase 1 step 6):
 // every "Draft this" button carries this action_id and the idea's uuid as value.
@@ -39,6 +39,17 @@ export const DRAFT_RETRY_ACTION = "draft_retry";
 
 export const DRAFT_REPLACE_CONFIRM_ACTION = "draft_replace_confirm";
 export const DRAFT_REPLACE_CANCEL_ACTION = "draft_replace_cancel";
+
+// Refine buttons under a draft opener: action_id is `refine:<kind>`, value is the
+// shared "<ideaId>|<platform>" encoding. Each kind gets a unique action_id.
+export const REFINE_ACTION = "refine";
+
+export function parseRefineKind(actionId: string): RefineKind | null {
+  const prefix = `${REFINE_ACTION}:`;
+  if (!actionId.startsWith(prefix)) return null;
+  const kind = actionId.slice(prefix.length);
+  return (REFINE_KINDS as readonly string[]).includes(kind) ? (kind as RefineKind) : null;
+}
 
 // The one-time heads-up appended to an opener when a name had to be redacted.
 export const REDACTED_NOTE =
@@ -224,13 +235,16 @@ export function buildReplaceConfirmBlocks(
   ];
 }
 
-// The draft's opener message: platform-labeled, names its canvas, no buttons. A new
-// opener (its own thread) is posted per draft while the canvas itself is reused.
+// The draft's opener message: platform-labeled, with the refine buttons that drive the
+// step-7 iteration loop. Each button carries the "<ideaId>|<platform>" value and a
+// unique `refine:<kind>` action_id. A new opener is posted per draft; the canvas is reused.
 export function buildOpenerBlocks(
+  ideaId: string,
   platform: Platform,
   opts?: { wasRedacted?: boolean },
 ): KnownBlock[] {
   const caveat = opts?.wasRedacted ? REDACTED_NOTE : "";
+  const value = encodePlatformValue(ideaId, platform);
   return [
     {
       type: "section",
@@ -238,8 +252,17 @@ export function buildOpenerBlocks(
         type: "mrkdwn",
         text:
           `Your *${PLATFORM_LABEL[platform]}* draft is in the canvas at the top of this chat. ` +
-          `Reply in this thread to tell me what to change.${caveat}`,
+          `Want a tweak? Tap a button and I'll update the canvas in place.${caveat}`,
       },
+    },
+    {
+      type: "actions",
+      elements: REFINE_KINDS.map((kind) => ({
+        type: "button" as const,
+        text: { type: "plain_text" as const, text: REFINE_LABEL[kind] },
+        action_id: `${REFINE_ACTION}:${kind}`,
+        value,
+      })),
     },
   ];
 }
