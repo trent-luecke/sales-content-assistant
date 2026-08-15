@@ -15,7 +15,6 @@ import {
   buildReplaceConfirmBlocks,
   DRAFT_REPLACE_CONFIRM_ACTION,
   DRAFT_REPLACE_CANCEL_ACTION,
-  REFINE_ACTION,
   parseRefineKind,
 } from "@/lib/digest";
 import { REFINE_KINDS } from "@/lib/generation";
