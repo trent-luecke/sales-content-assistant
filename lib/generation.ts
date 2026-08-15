@@ -202,25 +202,50 @@ export function assembleCanvasBody(raw: string, platform: Platform): string {
 
 const MODEL = anthropic("claude-sonnet-5");
 
-// Generate a first-draft post in the rep's voice with the anonymization guardrail
-// enforced: model call -> second-pass name check -> regenerate once if a name
-// leaked -> redact as a last resort. For organic ideas (moment null) the forbidden
-// list is empty and the checks are no-ops (inputs are already anonymized).
-export async function generateDraft(
-  idea: Idea,
-  profile: Profile,
-  moment: DemoMoment | null,
+export type RefineKind = "shorter" | "punchier" | "less_salesy" | "different_angle";
+
+export const REFINE_KINDS: readonly RefineKind[] = [
+  "shorter",
+  "punchier",
+  "less_salesy",
+  "different_angle",
+];
+
+export const REFINE_LABEL: Record<RefineKind, string> = {
+  shorter: "Shorter",
+  punchier: "Punchier",
+  less_salesy: "Less salesy",
+  different_angle: "Different angle",
+};
+
+const REFINE_DIRECTIVE: Record<RefineKind, string> = {
+  shorter:
+    "Make this noticeably shorter and tighter — cut anything that isn't pulling its weight, " +
+    "but keep the core point and the rep's voice.",
+  punchier:
+    "Make this punchier — a sharper opening line, stronger verbs, more energy — without " +
+    "changing the core message or the rep's voice.",
+  less_salesy:
+    "Make this warmer and less salesy — it should read like a person sharing something they " +
+    "believe, not a pitch. Keep the substance and the rep's voice.",
+  different_angle:
+    "Keep the same underlying idea but reframe it from a fresh angle with a new opening — a " +
+    "different way in, not a different topic. Keep the rep's voice.",
+};
+
+// The anonymization guardrail loop shared by generateDraft and refineDraft:
+// model call -> name leak check -> one regenerate -> redact as a last resort -> assemble.
+async function runGuarded(
+  prompt: string,
+  forbidden: string[],
   platform: Platform,
 ): Promise<{ body: string; wasRedacted: boolean }> {
-  const forbidden = moment ? forbiddenNames(moment) : [];
-  const basePrompt = buildDraftPrompt(idea, profile, moment, platform);
-
-  let { text } = await generateText({ model: MODEL, prompt: basePrompt });
+  let { text } = await generateText({ model: MODEL, prompt });
   let leaked = containsAny(text, forbidden);
 
   if (leaked) {
     const retryPrompt =
-      basePrompt +
+      prompt +
       `\n\nA prior draft included the name "${leaked}". Do NOT mention "${leaked}" or any ` +
       `other real person, company, or client. Rewrite the post fully anonymized.`;
     ({ text } = await generateText({ model: MODEL, prompt: retryPrompt }));
@@ -234,4 +259,50 @@ export async function generateDraft(
   }
 
   return { body: assembleCanvasBody(text, platform), wasRedacted };
+}
+
+// Generate a first-draft post in the rep's voice with the anonymization guardrail
+// enforced: model call -> second-pass name check -> regenerate once if a name
+// leaked -> redact as a last resort. For organic ideas (moment null) the forbidden
+// list is empty and the checks are no-ops (inputs are already anonymized).
+export async function generateDraft(
+  idea: Idea,
+  profile: Profile,
+  moment: DemoMoment | null,
+  platform: Platform,
+): Promise<{ body: string; wasRedacted: boolean }> {
+  const forbidden = moment ? forbiddenNames(moment) : [];
+  return runGuarded(buildDraftPrompt(idea, profile, moment, platform), forbidden, platform);
+}
+
+// Build the refine prompt: the full base draft prompt (voice, platform shape, HARD
+// anonymization rule, the moment) + the current draft + the change to make. For
+// Instagram the base prompt's ===VISUAL=== contract still governs the fresh output.
+export function buildRefinePrompt(
+  currentBody: string,
+  kind: RefineKind,
+  idea: Idea,
+  profile: Profile,
+  moment: DemoMoment | null,
+  platform: Platform,
+): string {
+  return (
+    buildDraftPrompt(idea, profile, moment, platform) +
+    `\n\n## The current draft (revise THIS — do not start over)\n${currentBody}` +
+    `\n\n## The change to make\n${REFINE_DIRECTIVE[kind]} Return ONLY the revised post text.`
+  );
+}
+
+// Regenerate a draft applying one refine directive, building on the current body.
+// Same guardrail + assembly as generateDraft.
+export async function refineDraft(
+  currentBody: string,
+  kind: RefineKind,
+  idea: Idea,
+  profile: Profile,
+  moment: DemoMoment | null,
+  platform: Platform,
+): Promise<{ body: string; wasRedacted: boolean }> {
+  const forbidden = moment ? forbiddenNames(moment) : [];
+  return runGuarded(buildRefinePrompt(currentBody, kind, idea, profile, moment, platform), forbidden, platform);
 }

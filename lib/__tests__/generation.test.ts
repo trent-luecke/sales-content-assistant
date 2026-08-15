@@ -8,6 +8,10 @@ import {
   assembleCanvasBody,
   canvasName,
   canvasDocument,
+  buildRefinePrompt,
+  refineDraft,
+  REFINE_KINDS,
+  REFINE_LABEL,
   type DemoMoment,
 } from "@/lib/generation";
 import { generateText } from "ai";
@@ -273,5 +277,72 @@ describe("canvasDocument", () => {
   it("preserves the body verbatim below the heading", () => {
     const body = "Para one.\n\n---\n\n**Visual idea**\n\nDo X.";
     expect(canvasDocument("Hook", body)).toBe(`# Hook\n\n${body}`);
+  });
+});
+
+describe("buildRefinePrompt", () => {
+  it("carries the base draft prompt, the current draft, and the kind's directive", () => {
+    const p = buildRefinePrompt("my current post text", "shorter", idea(), profile(), moment(), "linkedin");
+    // base prompt content
+    expect(p).toContain("The moment a demo lands is when I go quiet"); // idea hook
+    expect(p).toContain("HARD RULE"); // anonymization rule from buildDraftPrompt
+    // current draft + directive
+    expect(p).toContain("my current post text");
+    expect(p.toLowerCase()).toContain("shorter");
+    expect(p).toContain("Return ONLY the revised post");
+  });
+
+  it("uses a distinct directive for each kind", () => {
+    const forKind = (k: (typeof REFINE_KINDS)[number]) =>
+      buildRefinePrompt("body", k, idea(), profile(), moment(), "linkedin");
+    const punchier = forKind("punchier");
+    const lessSalesy = forKind("less_salesy");
+    const different = forKind("different_angle");
+    expect(punchier).not.toBe(lessSalesy);
+    expect(lessSalesy).not.toBe(different);
+    expect(punchier.toLowerCase()).toContain("punch");
+    expect(lessSalesy.toLowerCase()).toContain("salesy");
+    expect(different.toLowerCase()).toContain("angle");
+  });
+});
+
+describe("refineDraft", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns the revised body unchanged when the pass is clean", async () => {
+    vi.mocked(generateText).mockResolvedValueOnce({ text: "a tighter version" } as any);
+    const res = await refineDraft("the long version", "shorter", idea(), profile(), moment(), "linkedin");
+    expect(res).toEqual({ body: "a tighter version", wasRedacted: false });
+    expect(generateText).toHaveBeenCalledTimes(1);
+  });
+
+  it("regenerates once when a name leaks, and returns the clean retry", async () => {
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ text: "Chris loved the shorter cut" } as any) // leaks "Chris"
+      .mockResolvedValueOnce({ text: "a coach loved the shorter cut" } as any); // clean
+    const res = await refineDraft("body", "shorter", idea(), profile(), moment(), "linkedin");
+    expect(res.wasRedacted).toBe(false);
+    expect(res.body).toBe("a coach loved the shorter cut");
+    expect(generateText).toHaveBeenCalledTimes(2);
+  });
+
+  it("redacts as a fail-safe when the retry still leaks", async () => {
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ text: "Chris again" } as any)
+      .mockResolvedValueOnce({ text: "Chris still here" } as any);
+    const res = await refineDraft("body", "punchier", idea(), profile(), moment(), "linkedin");
+    expect(res.wasRedacted).toBe(true);
+    expect(res.body).not.toMatch(/Chris/);
+    expect(generateText).toHaveBeenCalledTimes(2);
+  });
+
+  it("assembles the Instagram visual section from the revised output", async () => {
+    vi.mocked(generateText).mockResolvedValueOnce({
+      text: "punchy caption\n===VISUAL===\na chalked barbell",
+    } as any);
+    const res = await refineDraft("old caption", "punchier", idea(), profile(), null, "instagram");
+    expect(res.body).toContain("punchy caption");
+    expect(res.body).toContain("Visual idea — not part of your caption");
+    expect(res.body).toContain("a chalked barbell");
   });
 });
