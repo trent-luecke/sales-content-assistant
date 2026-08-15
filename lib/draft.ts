@@ -238,6 +238,7 @@ async function draftOnePlatform(
       canvas_id: canvasId,
       idea_id: idea.id,
       platform,
+      draft_body: body,
     });
     if (error) throw error;
     return { ok: true, platform };

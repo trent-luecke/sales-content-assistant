@@ -39,6 +39,7 @@ create table sca_thread_map (
   thread_ts text not null,
   canvas_id text,
   platform text check (platform in ('linkedin','instagram')),
+  draft_body text,
   idea_id uuid references sca_ideas(id) on delete set null,
   created_at timestamptz default now(),
   unique (slack_channel, thread_ts)
